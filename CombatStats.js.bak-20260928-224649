@@ -1,0 +1,38 @@
+/*
+ * CombatStats.js — OpenJS 1.5.0
+ *
+ * 给 AnimatedScoreboard 提供两个 PlaceholderAPI 变量：
+ *   %openjs_combatstats_deaths%    —— 当前玩家的原版死亡次数
+ *   %openjs_combatstats_mobkills%  —— 当前玩家击杀的生物总数
+ *
+ * 数据直接读取原版统计（Statistic.DEATHS / Statistic.MOB_KILLS）。
+ * 原版统计由服务端持久化，重启后不会丢失，也不需要额外的计时任务。
+ * 这样管理员、服主和普通玩家的数据都使用同一套规则。
+ */
+
+var Statistic = Java.type("org.bukkit.Statistic");
+var Player = Java.type("org.bukkit.entity.Player");
+
+var placeholderApi = Services.get("PlaceholderApi");
+
+placeholderApi.registerPlaceholder("combatstats", {
+    onRequest: function(player, params) {
+        if (!(player instanceof Player)) {
+            return "0";
+        }
+
+        var key = (params || "").toLowerCase();
+        if (key === "deaths") {
+            return String(player.getStatistic(Statistic.DEATHS));
+        }
+        if (key === "mobkills") {
+            return String(player.getStatistic(Statistic.MOB_KILLS));
+        }
+        return "0";
+    }
+});
+
+// /oj reload 或脚本卸载时注销占位符，避免重复注册。
+task.bindToUnload(function() {
+    placeholderApi.unregisterPlaceholder("combatstats");
+});
