@@ -334,7 +334,7 @@
         sender.sendMessage(ChatColor.YELLOW + "/equip" + ChatColor.GRAY + " —— 查看装备槽位");
         sender.sendMessage(ChatColor.YELLOW + "/equip <槽位>" + ChatColor.GRAY + " —— 查看该槽位已注册装备");
         sender.sendMessage(ChatColor.YELLOW + "/equip arms [武器名]" + ChatColor.GRAY
-                + " —— 获取指定武器，例：/equip arms 村好剑");
+                + " —— 获取指定武器，例：/equip arms 村好剑、/equip arms 末影剑");
         sender.sendMessage(ChatColor.YELLOW + "/equip shield 基础盾牌" + ChatColor.GRAY
                 + " —— 获取盾牌（等价于 /equip offhand 基础盾牌）");
     }

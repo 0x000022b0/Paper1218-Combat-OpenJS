@@ -873,6 +873,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 ## 附录 D：契约更新记录
 
+- 2026-09-30：新增 `EnderSword.js`「末影剑」——铁剑魔改、基础伤害 9、无限耐久、触及 +1.5（实体/方块交互距离）、有附魔光效但无法附魔；Q 拦截丢剑并投掷 2.5 倍速度（3.75 格/tick）的末影珍珠。实测物品属性与合成 `PlayerDropItemEvent` 的弹射物速度。
 - 2026-09-30：新增 `BasicShield.js`「基础盾牌」——副手 +10 最大生命、无限耐久、无法附魔但强制附魔光效、固有 20% 减伤、格挡时获得 7 tick 无敌窗口；装备框架补充 `shield -> offhand`、`weapon -> arms` 槽位别名，并在 6.11 记录槽位别名规则。
 - 2026-09-29：升级 v1.5.4。新增 7.12 `Resurrection.js` 契约：命令方块专用 `/resurrection <秒数>`（1~600 秒），以执行位置为基准找同世界最近玩家，保存原模式/飞行状态后切换旁观者，私发“已经切换为旁观者模式，请尽快前往死亡地点”，每秒 actionbar + 10/5/3/2/1 秒 title 倒计时，结束后恢复原模式与飞行状态；支持重复触发刷新计时、玩家退出立即恢复、PDC `resurrection_prev_mode` 在服务器重启/脚本重载后兜底恢复。实测命令方块 `/resurrection 5` 在 XP 上完成切换与恢复。
 
