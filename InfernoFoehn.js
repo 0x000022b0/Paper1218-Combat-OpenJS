@@ -14,6 +14,8 @@
  *   - 困难模式：/call boss 炎狱焚风-hard。HP=300+400×附近玩家数（>10 按 10 计），
  *     火种=玩家数×4 并在 64 格随机分布、12 秒窗口；多目标火球/连续冲撞/全玩家吸附激光/
  *     10 次远程硬直/15 护甲 10 韧性/末影水晶凋零等强化机制；战斗聊天提示关闭。
+ *   - AllMusic BGM：一阶段循环《霊知の太陽信仰 ～ Nuclear Fusion》（22636637），
+ *     半血引燃后循环《Armageddon》（1495879966）；死亡/清理/脚本卸载时停止。
  *
  * 攻击手段：
  *   1. 杀戮光环：6 格内玩家被点燃，每 0.1 秒受到 1 点伤害（会重置受击无敌帧）
@@ -214,6 +216,23 @@
     var HARD_MOVE_SPEED_MULT = 1.25;
     var HARD_WITHER_TICKS = 300;          // 15 秒
 
+    // ---------------------------------------------------------------------------
+    // AllMusic BGM（阶段背景音乐）
+    // ---------------------------------------------------------------------------
+    // 说明：
+    //   - 服务器安装 AllMusic + 客户端安装对应 mod 后，服务端通过 /music 点歌。
+    //   - AllMusic 没有单曲循环命令，这里通过反射读取 PlayMusic.nowPlayMusic / playList，
+    //     把当前 BGM 对象复制回播放队列，实现无缝单曲循环。
+    //   - 一阶段循环《霊知の太陽信仰 ～ Nuclear Fusion》
+    //   - 二阶段（引燃倒计时开始后）循环《Armageddon》
+    //   - 战斗结束 / 脚本卸载时停止 BGM，并清掉播放队列里的 BGM 缓存。
+    var BGM_ENABLED = true;
+    var BGM_API = "netapi";
+    var BGM_PHASE1_ID = "22636637";     // 霊知の太陽信仰 ～ Nuclear Fusion（上海アリス幻樂団）
+    var BGM_PHASE2_ID = "1495879966";   // Armageddon（LeaF）
+    var BGM_REFRESH_TICKS = 10;         // 0.5 秒检查一次
+    var BGM_ADD_RETRY_TICKS = 100;      // 添加失败时 5 秒重试
+
     // 混合载具：Husk 负责寻路/移动，Slime(size 4) 负责全程浮空的碰撞箱
     var HYBRID_SLIME_SIZE = 4;
     var HYBRID_SLIME_HEIGHT = 0.52 * HYBRID_SLIME_SIZE; // 2.08
@@ -247,6 +266,19 @@
     var globalTick = 0;
     var lastRegistryApi = null;
 
+    // AllMusic BGM 运行时状态
+    var allMusicRefs = null;        // { playMusicClass, nowField, listField, musicApisField }
+    var allMusicUnavailable = false;
+    var allMusicApiCache = null;    // { api, playUrlMethod }
+    var bgmActivePhase = 0;         // 0=未播放 / 1=一阶段 / 2=二阶段
+    var bgmP1LastAddTick = -10000;
+    var bgmP2LastAddTick = -10000;
+    var bgmP1UrlLoading = false;
+    var bgmP2UrlLoading = false;
+    var bgmP1UrlFailed = false;
+    var bgmP2UrlFailed = false;
+    var bgmShuttingDown = false;
+
     // ---------------------------------------------------------------------------
     // 工具函数
     // ---------------------------------------------------------------------------
@@ -255,6 +287,430 @@
         if (value < min) return min;
         if (value > max) return max;
         return value;
+    }
+
+    // ---------------------------------------------------------------------------
+    // AllMusic BGM 控制
+    // ---------------------------------------------------------------------------
+    // AllMusic 对插件类做了独立类加载器隔离，OpenJS 无法直接 Java.type 其内部类；
+    // 这里通过 Bukkit 插件实例的类加载器 + 反射拿到 PlayMusic.nowPlayMusic / playList，
+    // 再用控制台执行 /music 点歌。这样既能精确无缝循环，也不需要解析 AllMusic 的聊天输出。
+    function resolveAllMusicRefs() {
+        if (!BGM_ENABLED) return null;
+        if (allMusicRefs) return allMusicRefs;
+        if (allMusicUnavailable) return null;
+        try {
+            var pluginManager = Bukkit.getPluginManager();
+            var musicPlugin = pluginManager.getPlugin("AllMusic");
+            if (musicPlugin == null) musicPlugin = pluginManager.getPlugin("allmusic");
+            if (musicPlugin == null || !musicPlugin.isEnabled()) {
+                allMusicUnavailable = true;
+                log.warn("InfernoFoehn 未找到已启用的 AllMusic，BGM 功能已关闭。");
+                return null;
+            }
+            var loader = musicPlugin.getClass().getClassLoader();
+            var playMusicClass = loader.loadClass("com.coloryr.allmusic.server.core.music.PlayMusic");
+            var allMusicClass = loader.loadClass("com.coloryr.allmusic.server.core.AllMusic");
+            var nowField = playMusicClass.getField("nowPlayMusic");
+            var listField = playMusicClass.getDeclaredField("playList");
+            listField.setAccessible(true);
+            var musicApisField = allMusicClass.getField("MUSIC_APIS");
+            allMusicRefs = {
+                playMusicClass: playMusicClass,
+                nowField: nowField,
+                listField: listField,
+                musicApisField: musicApisField
+            };
+            allMusicApiCache = null;
+            log.info("InfernoFoehn 已连接 AllMusic BGM（" + musicPlugin.getName() + "）。");
+            return allMusicRefs;
+        } catch (e) {
+            allMusicUnavailable = true;
+            log.warn("InfernoFoehn 连接 AllMusic 失败，BGM 功能已关闭：" + e);
+            return null;
+        }
+    }
+
+    function getBgmQueue() {
+        if (!allMusicRefs) return null;
+        try {
+            return allMusicRefs.listField.get(null);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function getBgmCurrent() {
+        if (!allMusicRefs) return null;
+        try {
+            return allMusicRefs.nowField.get(null);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function songId(song) {
+        if (song == null) return "";
+        try {
+            return String(song.getClass().getMethod("getId").invoke(song));
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function songApi(song) {
+        if (song == null) return "";
+        try {
+            return String(song.getClass().getMethod("getApi").invoke(song));
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function isBgmSong(song) {
+        var id = songId(song);
+        return (id === BGM_PHASE1_ID || id === BGM_PHASE2_ID) && songApi(song) === BGM_API;
+    }
+
+    // 预解析 BGM 的真实播放链接。AllMusic 默认在歌曲真正开始时才调用 getPlayUrl + getLyric，
+    // 其中歌词接口可能阻塞数十秒，导致切歌出现长时间静音。这里在上一阶段播放期间
+    // 提前把 playerUrl 写入 SongInfoObj，AllMusic 播放时会直接使用该链接并跳过歌词请求。
+    function getMusicApiRuntime() {
+        if (allMusicApiCache) return allMusicApiCache;
+        if (!allMusicRefs) return null;
+        try {
+            var apis = allMusicRefs.musicApisField.get(null);
+            var api = apis.get(BGM_API);
+            if (api == null) return null;
+            var methods = api.getClass().getMethods();
+            var playUrlMethod = null;
+            for (var i = 0; i < methods.length; i++) {
+                if (methods[i].getName() === "getPlayUrl" && methods[i].getParameterCount() === 1) {
+                    playUrlMethod = methods[i];
+                    break;
+                }
+            }
+            if (playUrlMethod == null) return null;
+            allMusicApiCache = { api: api, playUrlMethod: playUrlMethod };
+            return allMusicApiCache;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function songPlayerUrl(song) {
+        if (song == null) return "";
+        try {
+            var value = song.getClass().getMethod("getPlayerUrl").invoke(song);
+            return value == null ? "" : String(value);
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function isBgmUrlReady(song) {
+        var url = songPlayerUrl(song);
+        return url.length > 0 && url !== "null";
+    }
+
+    function setSongPlayerUrl(song, url) {
+        try {
+            var field = song.getClass().getDeclaredField("playerUrl");
+            field.setAccessible(true);
+            field.set(song, url);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function preloadBgmUrl(song, phase) {
+        var ok = false;
+        try {
+            if (bgmShuttingDown) return;
+            if (song != null && !isBgmUrlReady(song)) {
+                var apiInfo = getMusicApiRuntime();
+                if (apiInfo != null) {
+                    var url = apiInfo.playUrlMethod.invoke(apiInfo.api, songId(song));
+                    if (url != null) {
+                        var urlText = String(url);
+                        if (urlText.length > 0 && urlText !== "null") {
+                            ok = setSongPlayerUrl(song, urlText);
+                            if (ok) {
+                                log.info("InfernoFoehn BGM 预加载完成：phase=" + phase
+                                        + " id=" + songId(song));
+                            }
+                        }
+                    }
+                }
+            } else if (song != null) {
+                ok = true;
+            }
+        } catch (e) {
+            log.warn("InfernoFoehn BGM 预加载异常：phase=" + phase + " " + e);
+        } finally {
+            if (phase === 1) {
+                bgmP1UrlLoading = false;
+                bgmP1UrlFailed = !ok;
+            } else {
+                bgmP2UrlLoading = false;
+                bgmP2UrlFailed = !ok;
+            }
+        }
+    }
+
+    function ensureBgmUrlPreloaded(song, phase) {
+        if (song == null) return;
+        if (isBgmUrlReady(song)) {
+            if (phase === 1) {
+                bgmP1UrlLoading = false;
+                bgmP1UrlFailed = false;
+            } else {
+                bgmP2UrlLoading = false;
+                bgmP2UrlFailed = false;
+            }
+            return;
+        }
+        if ((phase === 1 && bgmP1UrlLoading) || (phase === 2 && bgmP2UrlLoading)) return;
+        if (phase === 1) {
+            bgmP1UrlLoading = true;
+        } else {
+            bgmP2UrlLoading = true;
+        }
+        try {
+            task.thread(function () {
+                preloadBgmUrl(song, phase);
+            });
+        } catch (e) {
+            if (phase === 1) {
+                bgmP1UrlLoading = false;
+            } else {
+                bgmP2UrlLoading = false;
+            }
+        }
+    }
+
+    function findQueuedBgm(id) {
+        var list = getBgmQueue();
+        if (!list) return null;
+        try {
+            for (var i = 0; i < list.size(); i++) {
+                var song = list.get(i);
+                if (songId(song) === id && songApi(song) === BGM_API) {
+                    return song;
+                }
+            }
+        } catch (e) { }
+        return null;
+    }
+
+    function removeQueuedBgm(id) {
+        var list = getBgmQueue();
+        if (!list) return 0;
+        var removed = 0;
+        try {
+            for (var i = list.size() - 1; i >= 0; i--) {
+                var song = list.get(i);
+                if (songId(song) === id && songApi(song) === BGM_API) {
+                    list.remove(i);
+                    removed++;
+                }
+            }
+        } catch (e) { }
+        return removed;
+    }
+
+    function moveQueuedBgmToFront(song) {
+        var list = getBgmQueue();
+        if (!list || song == null) return false;
+        try {
+            list.remove(song);
+            list.add(0, song);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // 让当前歌曲在队列里始终保留且只保留一份副本；AllMusic 播放到队首副本时即可无缝续播。
+    function ensureBgmLoopCopy(current, id) {
+        var list = getBgmQueue();
+        if (!list || current == null) return;
+        try {
+            var kept = null;
+            for (var i = list.size() - 1; i >= 0; i--) {
+                var song = list.get(i);
+                if (songId(song) === id && songApi(song) === BGM_API) {
+                    if (kept == null) {
+                        kept = song;
+                    } else {
+                        list.remove(i);
+                    }
+                }
+            }
+            if (kept != null) {
+                list.remove(kept);
+            }
+            list.add(0, current);
+        } catch (e) {
+            log.warn("InfernoFoehn 维护 BGM 循环队列失败：" + e);
+        }
+    }
+
+    function allMusicCommand(command) {
+        try {
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "music " + command);
+        } catch (e) {
+            log.warn("InfernoFoehn 执行 AllMusic 指令失败（music " + command + "）：" + e);
+        }
+    }
+
+    // 通过 AllMusic 异步解析歌曲并加入队列；解析需要访问网易云 API，通常需要数秒。
+    function requestBgmAdd(phase) {
+        var id = phase === 1 ? BGM_PHASE1_ID : BGM_PHASE2_ID;
+        var lastTick = phase === 1 ? bgmP1LastAddTick : bgmP2LastAddTick;
+        if (globalTick - lastTick < BGM_ADD_RETRY_TICKS) return;
+        if (phase === 1) {
+            bgmP1LastAddTick = globalTick;
+        } else {
+            bgmP2LastAddTick = globalTick;
+        }
+        if (Bukkit.getOnlinePlayers().isEmpty()) return;
+        allMusicCommand(BGM_API + " " + id);
+    }
+
+    function getDesiredBgmPhase() {
+        if (!BGM_ENABLED) return 0;
+        var desired = 0;
+        for (var uuid in activeBosses) {
+            if (!activeBosses.hasOwnProperty(uuid)) continue;
+            var boss = activeBosses[uuid];
+            if (!boss || boss.dead) continue;
+            // 火种阶段 / 火种回归也属于最终阶段，继续沿用二阶段 BGM。
+            if (boss.phase2Triggered || boss.fireSeedPhase || boss.fireSeedAnimation) {
+                return 2;
+            }
+            desired = 1;
+        }
+        return desired;
+    }
+
+    function maintainPhase1Bgm() {
+        var list = getBgmQueue();
+        if (!list) return;
+        var current = getBgmCurrent();
+        if (isBgmSong(current) && songId(current) === BGM_PHASE1_ID) {
+            bgmActivePhase = 1;
+            ensureBgmLoopCopy(current, BGM_PHASE1_ID);
+            // 提前把二阶段歌解析好放进队列，并预解析播放链接；真正引燃时直接 next。
+            var queuedPhase2 = findQueuedBgm(BGM_PHASE2_ID);
+            if (queuedPhase2 == null) {
+                requestBgmAdd(2);
+            } else {
+                ensureBgmUrlPreloaded(queuedPhase2, 2);
+            }
+            return;
+        }
+
+        // 当前不是一阶段 BGM：队列里已有就等链接预解析好再切歌，否则请求添加。
+        var queued = findQueuedBgm(BGM_PHASE1_ID);
+        if (queued == null) {
+            bgmP1UrlFailed = false;
+            requestBgmAdd(1);
+            return;
+        }
+        ensureBgmUrlPreloaded(queued, 1);
+        if (!isBgmUrlReady(queued) && !bgmP1UrlFailed) {
+            // 预解析期间保留当前正在播放的音乐，避免出现长时间静音。
+            return;
+        }
+        moveQueuedBgmToFront(queued);
+        bgmActivePhase = 1;
+        if (current != null) {
+            allMusicCommand("next");
+        }
+    }
+
+    function maintainPhase2Bgm() {
+        var list = getBgmQueue();
+        if (!list) return;
+        var current = getBgmCurrent();
+        if (isBgmSong(current) && songId(current) === BGM_PHASE2_ID) {
+            bgmActivePhase = 2;
+            removeQueuedBgm(BGM_PHASE1_ID);
+            ensureBgmLoopCopy(current, BGM_PHASE2_ID);
+            return;
+        }
+
+        // 当前不是二阶段 BGM：先清掉排队中的一阶段，避免切歌后又回到一阶段。
+        removeQueuedBgm(BGM_PHASE1_ID);
+        var queued = findQueuedBgm(BGM_PHASE2_ID);
+        if (queued == null) {
+            // 保留可能正在播放的一阶段 BGM，等二阶段解析好后再 next，避免中间插播空闲歌单。
+            bgmP2UrlFailed = false;
+            requestBgmAdd(2);
+            return;
+        }
+        ensureBgmUrlPreloaded(queued, 2);
+        if (!isBgmUrlReady(queued) && !bgmP2UrlFailed) {
+            // 预解析期间继续播放一阶段音乐；不要把队列清空后让空闲歌单插进来。
+            return;
+        }
+        moveQueuedBgmToFront(queued);
+        bgmActivePhase = 2;
+        if (current != null) {
+            allMusicCommand("next");
+        }
+    }
+
+    function stopBgm() {
+        if (!allMusicRefs && !resolveAllMusicRefs()) return;
+        removeQueuedBgm(BGM_PHASE1_ID);
+        removeQueuedBgm(BGM_PHASE2_ID);
+        var current = getBgmCurrent();
+        if (isBgmSong(current)) {
+            allMusicCommand("next");
+        }
+        bgmActivePhase = 0;
+        bgmP1LastAddTick = -10000;
+        bgmP2LastAddTick = -10000;
+        bgmP1UrlFailed = false;
+        bgmP2UrlFailed = false;
+    }
+
+    // 脚本卸载回调在异步线程执行，不能调用 Bukkit.dispatchCommand（Paper AsyncCatcher）。
+    // 这里只清队列并直接结束当前 BGM，让 AllMusic 自己接管后续队列。
+    function stopBgmForUnload() {
+        if (!BGM_ENABLED) return;
+        if (!allMusicRefs && !resolveAllMusicRefs()) return;
+        removeQueuedBgm(BGM_PHASE1_ID);
+        removeQueuedBgm(BGM_PHASE2_ID);
+        var current = getBgmCurrent();
+        if (isBgmSong(current)) {
+            try {
+                var lessTimeField = allMusicRefs.playMusicClass.getField("musicLessTime");
+                lessTimeField.setLong(null, 10);
+            } catch (e) { }
+        }
+        bgmActivePhase = 0;
+    }
+
+    function updateBgm() {
+        if (!BGM_ENABLED) return;
+        if (globalTick % BGM_REFRESH_TICKS !== 0) return;
+        if (!resolveAllMusicRefs()) return;
+        var desired = getDesiredBgmPhase();
+        if (desired === 0) {
+            if (bgmActivePhase !== 0) {
+                stopBgm();
+            }
+            return;
+        }
+        if (desired === 1) {
+            maintainPhase1Bgm();
+        } else {
+            maintainPhase2Bgm();
+        }
     }
 
     // OpenJS 的 task.delay 内部使用线程池（异步）。涉及 Bukkit 世界/实体的延迟逻辑
@@ -3820,6 +4276,12 @@ function drawGuardianLaser(world, from, to) {
             log.error("InfernoFoehn 主循环异常：" + e);
         }
         try {
+            updateBgm();
+        } catch (e) {
+            log.error("InfernoFoehn BGM 主循环异常：" + e
+                    + (e && e.stack ? "\n" + e.stack : ""));
+        }
+        try {
             updateTrackedProjectiles();
         } catch (e) { }
     });
@@ -3901,6 +4363,17 @@ function drawGuardianLaser(world, from, to) {
         ensureRegistered();
     });
 
+    // 脚本卸载 / 服务器关闭时停止 BGM，避免声音在重载后继续循环。
+    task.bindToUnload(function() {
+        try {
+            bgmShuttingDown = true;
+            if (Bukkit.isPrimaryThread()) {
+                stopBgm();
+            } else {
+                stopBgmForUnload();
+            }
+        } catch (e) { }
+    });
 
     log.info("InfernoFoehn 已加载：使用 /call boss " + BOSS_NAME + " 获取召唤烈焰棒。");
 })();

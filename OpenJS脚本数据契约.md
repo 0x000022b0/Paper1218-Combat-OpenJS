@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.0
+> **契约版本**：1.5.1
 > **最后更新**：2026-09-29
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -566,6 +566,35 @@ trackedProjectiles[uuid] = {
 
 ---
 
+### 7.11 AllMusic 阶段 BGM 契约（InfernoFoehn）
+
+适用脚本：`InfernoFoehn.js` 的普通与困难模式。依赖服务端 AllMusic 4.2.5（实测）与客户端 mod。
+
+**强制规则：**
+
+1. 一阶段循环 `霊知の太陽信仰 ～ Nuclear Fusion`（`netapi` ID `22636637`）；半血引燃、火种阶段、火种回归期间循环 `Armageddon`（`1495879966`）。
+2. AllMusic 没有单曲循环 API，必须由脚本维护队列副本。反射入口通过
+   `Bukkit.getPluginManager().getPlugin("AllMusic").getClassLoader()` 加载：
+   - `PlayMusic.nowPlayMusic`：当前 `SongInfoObj`；
+   - `PlayMusic.playList`：私有静态播放队列；
+   - `AllMusic.MUSIC_APIS`：按 API id 取 `netapi.NetiApiMain`；
+   - `IMusicApi.getPlayUrl(String)`：预解析播放链接。
+3. 队列中同一 BGM 必须保持恰好一份副本，并位于玩家队列之前；当前曲目结束时副本无缝接唱。脚本每 10 tick 维护一次，失败时 5 秒重试。
+4. 切阶段前必须预解析下一阶段 BGM 的 `playerUrl` 并写回 `SongInfoObj.playerUrl`；链接未就绪不得清空当前 BGM / 发送 `/music next`，避免长时间静音或空闲歌单插播。
+5. BOSS 死亡（`boss.dead=true` 或从 `activeBosses` 移除）、脚本卸载、服务器关闭时必须停止 BGM 并清除队列中的 BGM 条目。
+6. 主线程停止路径可用控制台 `music next`；异步卸载路径禁止 `Bukkit.dispatchCommand`（Paper AsyncCatcher），必须反射把 `PlayMusic.musicLessTime` 置 10 结束当前播放。
+7. BGM 为全服共享；任意一只 BOSS 进入第二阶段即播放二阶段 BGM，所有 BOSS 死亡后停止。没有在线玩家时不发送点歌命令。
+8. AllMusic 版本升级后字段 / 方法名可能变化，必须重新实测；当前实现跳过歌词加载（写入 `playerUrl` 会走 AllMusic 的“无歌词”分支）。
+
+**禁止：**
+
+- 直接拼接网易云播放 URL 或依赖客户端命令点歌；
+- 在异步线程调用 Bukkit API / `dispatchCommand`；
+- 每 tick 反射遍历大地图实体或反复添加同一 BGM 导致队列膨胀；
+- BOSS 已清理仍保留 `task.thread` 预加载回调之外的长生命周期 BGM 状态。
+
+---
+
 ## 8. 战斗事件契约
 
 ### 8.1 伤害事件模板
@@ -799,7 +828,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 | --- | --- | --- |
 | `CallBoss.js` | ✅ | 烈焰棒、6 秒倒计时、BossRegistry v1 |
 | `DouQuQu.js` | ✅ | 无差别攻击模式：`/douququ` 命令、PDC 持久化、共享 API、BOSS 互相攻击 |
-| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统，契约 v1.5.0 |
+| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（无缝循环 / 阶段切换 / 清理停止），契约 v1.5.1 |
 | `ThousandFacedWitch.js` | ✅ | 千面魔女；已修复 `ItemDisplay` 召唤异常与 `damage(amount, null)` 重载歧义；已接入 DouQuQu 无差别攻击模式 |
 | `SuperTNT.js` | ✅ | 自定义 float 爆炸威力 TNT：`/supertnt [0.1~64]`；BlockPlaceEvent → TNTPrimeEvent → EntitySpawnEvent/主循环 → ExplosionPrimeEvent；取消原版整数爆炸并走 5 参数 `createExplosion` |
 | `KanKanSword.js` | ❌ 待迁移 | 仍有顶层 `var Material` 等；迁移时保持行为不变 |
@@ -810,6 +839,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-29：升级 v1.5.1。新增 7.11 AllMusic 阶段 BGM 契约：`InfernoFoehn.js` 一阶段循环 `22636637`（霊知の太陽信仰 ～ Nuclear Fusion），半血 / 火种阶段循环 `1495879966`（Armageddon）；通过 AllMusic 类加载器反射 `PlayMusic.nowPlayMusic` / `playList` 维护无缝队列副本，预加载 `IMusicApi.getPlayUrl` 写入 `playerUrl` 以避免歌词接口阻塞，死亡 / 清理 / 异步卸载时停止并清理 BGM 队列。AllMusic 版本升级需重新实测。
 
 - 2026-09-29：新增 `EquipRegistry` 装备注册契约与 `/equip <槽位> [装备名]` 获取框架；新增 `VillageSword.js`「村好剑」：木剑攻击 6 / 攻速 2 / 无限耐久 / 无附魔；Q 白色剑气 16 格 4 点弹射物伤害、E 重击 15 点破盾并过热 30 tick、F 突刺 5 格沿途 8 点伤害冷却 20 tick；记录 E 键在 Paper 1.21.8 纯原版客户端无法触发的实测限制。
 - 2026-09-29：新增 `SuperTNT.js`：`/supertnt [0.1~64 浮点]` 获取自定义爆炸威力的 TNT；物品 PDC 携带威力，`TNTPrimeEvent` 记录待绑定、`EntitySpawnEvent` + 主循环绑定到 `TNTPrimed`、`ExplosionPrimeEvent` 取消原版整数爆炸并调用 5 参数 `createExplosion`；实测小数威力 1.75 / 4 / 6.5 与同威力原版参照的破坏方块数量一致，并记录 `BlockExplodeEvent.getYield()` 在 Paper 1.21.8 返回 interaction 系数而非爆炸威力。
