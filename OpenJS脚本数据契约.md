@@ -873,6 +873,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 ## 附录 D：契约更新记录
 
+- 2026-09-30：`EnderSword.js` Q 冷却增加经验条上方 actionbar 倒计时，每 tick 根据 `pearlReadyTick` 显示剩余 tick，冷却结束清空；冷却仍为 12 tick。
 - 2026-09-30：`EnderSword.js` Q 技能增加 12 tick 冷却，冷却按玩家 UUID 维护，冷却期间拦截 Q 不生成弹射物并 actionbar 提示剩余 tick；实测连续 Q 只生成 1 颗、等待 15 tick 后可再次生成。
 - 2026-09-30：新增 `EnderSword.js`「末影剑」——铁剑魔改、基础伤害 9、无限耐久、触及 +1.5（实体/方块交互距离）、有附魔光效但无法附魔；Q 拦截丢剑并投掷 2.5 倍速度（3.75 格/tick）的末影珍珠。实测物品属性与合成 `PlayerDropItemEvent` 的弹射物速度。
 - 2026-09-30：新增 `BasicShield.js`「基础盾牌」——副手 +10 最大生命、无限耐久、无法附魔但强制附魔光效、固有 20% 减伤、格挡时获得 7 tick 无敌窗口；装备框架补充 `shield -> offhand`、`weapon -> arms` 槽位别名，并在 6.11 记录槽位别名规则。

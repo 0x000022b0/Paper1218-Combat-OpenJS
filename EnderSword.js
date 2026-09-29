@@ -30,6 +30,7 @@
     var PersistentDataType = Java.type("org.bukkit.persistence.PersistentDataType");
     var NamespacedKey = Java.type("org.bukkit.NamespacedKey");
     var Player = Java.type("org.bukkit.entity.Player");
+    var Bukkit = Java.type("org.bukkit.Bukkit");
     var Attribute = Java.type("org.bukkit.attribute.Attribute");
     var AttributeModifier = Java.type("org.bukkit.attribute.AttributeModifier");
     var AttributeOperation = Java.type("org.bukkit.attribute.AttributeModifier$Operation");
@@ -66,7 +67,7 @@
     var NORMAL_ENDER_PEARL_SPEED = 1.5;
     var PEARL_SPEED_MULTIPLIER = 2.5;
     var THROWN_PEARL_SPEED = NORMAL_ENDER_PEARL_SPEED * PEARL_SPEED_MULTIPLIER; // 3.75
-    var PEARL_COOLDOWN_TICKS = 12;
+    var PEARL_COOLDOWN_TICKS = 12; // 0.6 秒
 
     var PROJECTILE_TAG = "ender_sword_pearl";
 
@@ -136,6 +137,40 @@
             var item = player.getInventory().getItemInMainHand();
             if (isEnderSword(item)) player.setCooldown(item, ticks);
         } catch (e) { }
+
+        // 立即显示一次，之后由 1 tick 主循环持续刷新。
+        try {
+            player.sendActionBar(ChatColor.AQUA + SWORD_NAME + " " + ChatColor.YELLOW
+                    + "末影珍珠冷却 " + ChatColor.RED + ticks + "t");
+        } catch (e) { }
+    }
+
+    function updatePearlCooldowns() {
+        try {
+            var players = Bukkit.getOnlinePlayers();
+            var iterator = players.iterator();
+
+            while (iterator.hasNext()) {
+                var player = iterator.next();
+                var uuid = getPlayerId(player);
+                if (!uuid) continue;
+
+                var readyTick = pearlReadyTick[uuid];
+                if (readyTick == null) continue;
+
+                if (globalTick < readyTick) {
+                    var remain = readyTick - globalTick;
+                    player.sendActionBar(ChatColor.AQUA + SWORD_NAME + " " + ChatColor.YELLOW
+                            + "末影珍珠冷却 " + ChatColor.RED + remain + "t");
+                } else {
+                    delete pearlReadyTick[uuid];
+                    // 倒计时结束，清空经验条上方的 actionbar 文本。
+                    try { player.sendActionBar(""); } catch (e) { }
+                }
+            }
+        } catch (e) {
+            log.error("EnderSword 冷却倒计时异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+        }
     }
 
     function warnPearlCooldown(player) {
@@ -258,9 +293,10 @@
     ensureRegistered();
     task.repeat(ticks(20), ticks(20), ensureRegistered);
 
-    // 1 tick 主循环：维护 Q 技能冷却计时。
+    // 1 tick 主循环：维护 Q 技能冷却，并在经验条上方持续显示倒计时。
     task.repeat(ticks(1), ticks(1), function () {
         globalTick++;
+        updatePearlCooldowns();
     });
 
     // 玩家退出时清理冷却状态。
