@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.5
+> **契约版本**：1.5.6
 > **最后更新**：2026-09-30
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -378,6 +378,8 @@ BOSS 脚本接入契约：
 `/equip shield 基础盾牌` 是 `/equip offhand 基础盾牌` 的别名写法。
 GetEquip 目前内置槽位别名：`weapon` / `weapons` → `arms`，`shield` / `off_hand` / `secondary` → `offhand`。
 
+> **⚠️ 重点：自定义装备 / 技能选择触发事件前，MUST 先阅读 8.7 玩家事件可用性清单。**
+
 装备定义字段：
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -728,6 +730,38 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 ---
 
+### 8.7 玩家事件可用性清单（自定义装备 / 技能触发，2026-09-30 实测）
+
+> **⚠️ 重点（MUST 先读）**
+>
+> - 自定义装备 / 技能的主动触发 MUST 优先从 `PlayerInteractEvent`、`PlayerInteractAtEntityEvent`、`PrePlayerAttackEntityEvent` 中选择。
+> - `PlayerInteractEvent` 会因主手 / 副手而重复触发，处理前 MUST 过滤 `EquipmentSlot.HAND`。
+> - E 打开玩家自身背包不会有 `InventoryOpenEvent`；只有关闭背包时会触发 `InventoryCloseEvent(CRAFTING, PLAYER)`，因此 MUST NOT 把 `InventoryOpenEvent` 当作 E 键触发器。
+> - F 的 `PlayerSwapHandItemsEvent` 本身会触发；若判定 F 方案不可行，MUST 是能力设计冲突结论，不能写成“服务器收不到 F 事件”。
+
+实测环境：Paper 1.21.8 / OpenJS 1.5.0 / 玩家 XP 实机按键；完整操作过程见《可能有用的开发资料.md》7.26。
+
+| 操作 | 可用事件 | 备注 |
+| --- | --- | --- |
+| Q 丢弃 | `PlayerDropItemEvent` | ✅ 拦截丢出并改技能的成熟方案 |
+| F 换手 | `PlayerSwapHandItemsEvent` | ✅ 事件触发；注意与技能抢占换手行为 |
+| 右键空气 / 方块 | `PlayerInteractEvent`：`RIGHT_CLICK_AIR`、`RIGHT_CLICK_BLOCK` | ✅ 最推荐的主动技能触发；右键方块会触发主副手两份事件 |
+| 左键空气 / 方块 | `PlayerInteractEvent`：`LEFT_CLICK_AIR`、`LEFT_CLICK_BLOCK` | ✅ 可用；与挖掘 / 攻击共用左键 |
+| 左键摆动 | `PlayerAnimationEvent`（`ARM_SWING`）、Paper `PlayerArmSwingEvent` | ✅ 可用；二者可能同时触发，建议只监听一个 |
+| 右键实体 | `PlayerInteractAtEntityEvent`（优先）、`PlayerInteractEntityEvent` | ✅ 盔甲架实测只触发 At 变体；生物两者可能都触发，需去重 |
+| 攻击动作 | `PrePlayerAttackEntityEvent` | ✅ 优先用于攻击触发；`EntityDamageByEntityEvent` 可能因无敌 / 取消不触发 |
+| 潜行 | `PlayerToggleSneakEvent` | ✅ 可用 |
+| 冲刺 | `PlayerToggleSprintEvent` | ✅ 可用 |
+| 跳跃 / WASD 组合 | `PlayerInputEvent` | ✅ 可用；只能看到移动 / 跳跃 / 潜行 / 冲刺状态，不含 E / F / Q |
+| 移动 / 转向 | `PlayerMoveEvent` | ✅ 可用但高频；直接触发技能 MUST 防抖或加条件 |
+| 创造双击跳跃 | `PlayerToggleFlightEvent` | ✅ 仅创造模式可靠 |
+| 快捷栏切换 | `PlayerItemHeldEvent` | ✅ 可用 |
+| 聊天消息 | Paper `AsyncChatEvent`（优先）、旧 `AsyncPlayerChatEvent` | ✅ 可用 |
+| 斜杠命令 | `PlayerCommandPreprocessEvent` | ✅ 可用 |
+| 按 E 打开自身背包 | 无事件 | ❌ `InventoryOpenEvent` 不触发 |
+| 关闭自身背包 | `InventoryCloseEvent` | ✅ 可触发 `CRAFTING` + `PLAYER`；只能检测关闭，不能检测打开 |
+
+
 ## 9. 日志、提示与错误处理契约
 
 1. 日志前缀 MUST 带脚本 / BOSS 名：`log.info("InfernoFoehn ...")`。
@@ -905,6 +939,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 ## 附录 D：契约更新记录
 
+- 2026-09-30：升级 v1.5.6。新增 8.7 玩家事件可用性清单：Q `PlayerDropItemEvent`、F `PlayerSwapHandItemsEvent`、右键 / 左键 `PlayerInteractEvent`、右键实体 `PlayerInteractAtEntityEvent`、攻击 `PrePlayerAttackEntityEvent`、潜行 / 冲刺 / 跳跃 / 快捷栏 / 聊天 / 命令事件均实测可用；E 打开自身背包无 `InventoryOpenEvent`，只有关闭时 `InventoryCloseEvent(CRAFTING, PLAYER)`；明确 `PlayerInteractEvent` 必须过滤 `EquipmentSlot.HAND`。
 - 2026-09-30：升级 v1.5.5。新增 7.13 StarResurrection 契约与 `StarResurrection.js`：`/starresurrection <all|玩家名> <true|false>`；致命 `EntityDamageEvent` 优先拦截，`PlayerDeathEvent` 兜底 `/kill`；扣除主背包 / 副手 1 枚下界之星原地复活（1 HP + 生命恢复 II / 伤害吸收 II / 抗火 I + 图腾音效粒子）；状态存主世界 PDC `openjs:star_resurrection_state`，`all` 清空个人覆盖；实测 `/minecraft:damage XP 1000 minecraft:generic` 与 `/minecraft:kill XP` 各消耗 1 枚并存活。
 
 - 2026-09-30：`EnderSword.js` Q 冷却增加经验条上方 actionbar 倒计时，每 tick 根据 `pearlReadyTick` 显示剩余 tick，冷却结束清空；冷却仍为 12 tick。
