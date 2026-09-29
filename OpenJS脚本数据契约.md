@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.2
+> **契约版本**：1.5.3
 > **最后更新**：2026-09-29
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -210,7 +210,7 @@ task.repeat(ticks(1), ticks(1), function () {
 | `barKey` | NamespacedKey | ✅ | 用于重载清理 |
 | `objective` | Objective / null | SHOULD | 计分板目标 `inferno_foehn_hp`，记录共享生命值 |
 | `scoreKey` | string / null | SHOULD | 该 BOSS 在 objective 中的条目（`if_<uuid 前 12 位>`） |
-| `team` | Team / null | SHOULD | 包含 Husk 与 Slime 的队伍（`ijf_<uuid 前 12 位>`） |
+| `team` | Team / null | SHOULD | 包含 Husk 与 Slime 的队伍（`ijf_<uuid 前 12 位>`）；`prefix` 必须为空字符串，避免原版命令反馈 / 死亡消息把队伍前缀与实体自定义名叠加成“[炎狱焚风] 炎狱焚风” |
 | `lastDamageTick` | number | SHOULD | 上次伤害结算的全局 tick，用于同一 tick 双命中去重 |
 | `lastDamageSource` | string / null | SHOULD | 上次伤害来源 UUID，同一 tick 同一攻击者只结算一次 |
 | `spin` | number | ✅ | 外观自转角度 |
@@ -521,7 +521,7 @@ trackedProjectiles[uuid] = {
 | 伤害统一 | Slime 的 `EntityDamageEvent` 必须取消原伤害并调用 `handleHybridCollisionDamage`：玩家近战/投射物伤害、硬直倍率、远程计数、致命伤害全部走 Husk 同一套逻辑 |
 | 双命中去重 | 必须使用 `lastDamageTick` + `lastDamageSource`：同一 tick 内同一攻击者命中 Husk 和 Slime 只结算一次，避免横扫之刃双倍伤害 |
 | 计分板 | 创建 objective `inferno_foehn_hp`（16 字符以内）；每只 BOSS 的 `scoreKey = if_<uuid 前 12 位>`，分数与 Husk 当前 HP 同步 |
-| 队伍 | 创建 `ijf_<uuid 前 12 位>` 队伍，把 Husk 与 Slime 的 UUID 字符串都加入，用于统一识别 / 名称归属 |
+| 队伍 | 创建 `ijf_<uuid 前 12 位>` 队伍，把 Husk 与 Slime 的 UUID 字符串都加入，用于统一识别 / 名称归属；**`team.setPrefix("")` 必须为空**，否则原版 `/damage`、`/execute`、死亡消息等反馈会变成“[炎狱焚风] 炎狱焚风”，看起来像播报了两次 BOSS 名 |
 | 清理 | `cleanupBoss`、`cleanupOrphans`、死亡序列结束都要移除 Slime、注销队伍、清空计分板条目 |
 | 禁忌 | 不要把 Slime 交给 AI；不要用 `setVelocity` 积分位移（NoAI 下不可靠）；不要只处理其中一个碰撞箱的伤害 |
 
@@ -831,7 +831,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 | --- | --- | --- |
 | `CallBoss.js` | ✅ | 烈焰棒、6 秒倒计时、BossRegistry v1 |
 | `DouQuQu.js` | ✅ | 无差别攻击模式：`/douququ` 命令、PDC 持久化、共享 API、BOSS 互相攻击 |
-| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（一阶段 / 二阶段无缝循环、死亡自爆 UNICUBE! 播放 77 秒后切回默认歌单），契约 v1.5.2 |
+| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（一阶段 / 二阶段无缝循环、死亡自爆 UNICUBE! 播放 77 秒后切回默认歌单）；队伍前缀置空修复 BOSS 名在命令反馈 / 死亡消息中重复播报，契约 v1.5.3 |
 | `ThousandFacedWitch.js` | ✅ | 千面魔女；已修复 `ItemDisplay` 召唤异常与 `damage(amount, null)` 重载歧义；已接入 DouQuQu 无差别攻击模式 |
 | `SuperTNT.js` | ✅ | 自定义 float 爆炸威力 TNT：`/supertnt [0.1~64]`；BlockPlaceEvent → TNTPrimeEvent → EntitySpawnEvent/主循环 → ExplosionPrimeEvent；取消原版整数爆炸并走 5 参数 `createExplosion` |
 | `KanKanSword.js` | ❌ 待迁移 | 仍有顶层 `var Material` 等；迁移时保持行为不变 |
@@ -842,6 +842,9 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-29：升级 v1.5.3。修复 BOSS 名在播报消息中重复：`createBossScoreboard` 的队伍 `ijf_<uuid>` 不再设置 `[炎狱焚风] ` 聊天前缀，改为 `team.setPrefix("")`；队伍仍保留 Husk / Slime UUID 用于统一识别，但原版 `/damage`、`/execute`、死亡消息等不再出现“[炎狱焚风] 炎狱焚风”的双重名称。实测队伍前缀为空、displayName 仍为炎狱焚风。
+
 
 - 2026-09-29：升级 v1.5.2。炎狱焚风死亡自爆胜利曲：`startDeathSequence()` 切换 `UNICUBE!`（`3368128694`）；从实际开始播放 tick 起计时 1 分 17 秒（`77 × 20` tick），到时自动移除胜利曲并 `/music next` 切回 AllMusic 默认歌单；不加入无缝循环副本，已开始后被手动切走视为结束；期间召唤新 BOSS 时战斗 BGM 优先、胜利曲计时照常并在超时后清理。实测 22:38:58 开始、22:40:15 结束回默认歌单。同步更新 7.11 契约。
 

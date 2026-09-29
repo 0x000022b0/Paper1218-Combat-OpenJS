@@ -1222,7 +1222,10 @@
             }
             if (team != null) {
                 team.setDisplayName(BOSS_NAME);
-                team.setPrefix(ChatColor.DARK_RED + "[" + BOSS_NAME + "] ");
+                // 队伍只用于把 Husk 与 Slime 归入同一计分板队伍，不再给实体设置聊天前缀。
+                // 否则原版 /damage、/execute、死亡消息等反馈会把队伍前缀和实体自定义名叠加成
+                // “[炎狱焚风] 炎狱焚风”，看起来像播报了两次 BOSS 名。
+                team.setPrefix("");
                 try { team.addEntry(String(carrierUuid)); } catch (e) { }
                 try { team.addEntry(String(slimeUuid)); } catch (e) { }
             }
