@@ -135,8 +135,10 @@
             } else {
                 player.setFlying(false);
             }
+            return true;
         } catch (e) {
             log.warn("Resurrection 恢复玩家模式失败：" + e);
+            return false;
         }
     }
 
@@ -197,12 +199,20 @@
         if (!player || !state) return;
         try {
             if (player.isOnline()) {
-                applyPreviousMode(player, state.previousGameMode,
+                var restored = applyPreviousMode(player, state.previousGameMode,
                         state.previousAllowFlight, state.previousFlying);
-                clearPreviousModeMarker(player);
+                if (restored) {
+                    clearPreviousModeMarker(player);
+                }
                 if (!silent) {
-                    clearCountdownDisplay(player);
-                    player.sendMessage(ChatColor.GREEN + "[复活] 倒计时结束，已恢复为之前的游戏模式。");
+                    if (restored) {
+                        clearCountdownDisplay(player);
+                        player.sendMessage(ChatColor.GREEN
+                                + "[复活] 倒计时结束，已恢复为之前的游戏模式。");
+                    } else {
+                        player.sendMessage(ChatColor.RED
+                                + "[复活] 恢复原游戏模式失败，请联系管理员处理。");
+                    }
                 }
             } else {
                 clearPreviousModeMarker(player);
@@ -321,9 +331,10 @@
             var state = states[key];
             if (state) {
                 // 退出时立即恢复，避免下次登录仍停留在旁观者模式。
-                applyPreviousMode(player, state.previousGameMode,
-                        state.previousAllowFlight, state.previousFlying);
-                clearPreviousModeMarker(player);
+                if (applyPreviousMode(player, state.previousGameMode,
+                        state.previousAllowFlight, state.previousFlying)) {
+                    clearPreviousModeMarker(player);
+                }
                 delete states[key];
                 log.info("Resurrection 玩家退出，已恢复模式：" + player.getName());
             }
@@ -381,9 +392,10 @@
                 if (!states.hasOwnProperty(key)) continue;
                 var state = states[key];
                 if (state && state.player && state.player.isOnline()) {
-                    applyPreviousMode(state.player, state.previousGameMode,
-                            state.previousAllowFlight, state.previousFlying);
-                    clearPreviousModeMarker(state.player);
+                    if (applyPreviousMode(state.player, state.previousGameMode,
+                            state.previousAllowFlight, state.previousFlying)) {
+                        clearPreviousModeMarker(state.player);
+                    }
                 }
                 delete states[key];
             }
