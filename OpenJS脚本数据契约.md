@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.8
+> **契约版本**：1.5.9
 > **最后更新**：2026-09-30
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -787,6 +787,30 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 实测：物品属性、Q 治疗 4→19、僵尸伤害 12→16、1 键至圣斩后 4 键同时生成金块 `BlockDisplay` 与金色剑气源实体均通过；修复实体路径碰撞后，200 HP 僵尸被 5 tick 至圣斩命中 200→194（基础 1 + 5 = 6 伤害）；临时测试脚本与实体已清理。
 
 
+### 8.9 索命剑技能契约（`SoulReapingSword.js`）
+
+> **⚠️ 重点**
+>
+> - 所有反噬伤害 MUST 通过 `player.damage(amount)`（单参数）造成，不能传玩家自己作为伤害源，否则会递归触发索命剑的命中反噬逻辑。
+> - Q 红色剑气 MUST 维护“是否命中过目标”的状态；命中过任意目标则不反噬，只有到达射程 / 撞到方块且从未命中时才反噬施放者。
+> - 左键挥空 MUST 仅在 `PlayerInteractEvent` 的 `LEFT_CLICK_AIR` + `HAND` 且主手为索命剑时触发，不能把正常挖掘 / 攻击也计入挥空。
+
+装备与数值：
+
+| 项目 | 规则 |
+| --- | --- |
+| 基础物品 | `Material.NETHERITE_SWORD`，主手攻击伤害 20（+19），攻击速度 1.6（-2.4），无限耐久 |
+| 附魔光效 | `setEnchantmentGlintOverride(false)`；即使被附魔也不显示光效 |
+| Q 红色剑气 | `PlayerDropItemEvent` 拦截丢剑；红色 DUST 剑气，射程 16、速度 1 格/tick、伤害 15；Snowball 作为伤害来源 |
+| Q 未命中反噬 | 剑气从未命中任何实体且到达射程 / 撞到方块时，反噬施放者 15 伤害 |
+| 左键挥空反噬 | `PlayerInteractEvent.LEFT_CLICK_AIR` + 主手索命剑时，对施放者造成 2 伤害（技能常量） |
+| 命中反噬 | `EntityDamageByEntityEvent` 且来源为 `ENTITY_ATTACK / ENTITY_SWEEP_ATTACK`；普通 25% 反噬一半最终伤害；跳劈 50% |
+| 跳劈判定 | `event.isCritical()` 或玩家未落地且 `fallDistance > 0` |
+| Lore | MUST 写入：基础伤害 20、Q 红色剑气（伤害 15）、以及“每次挥剑必定见血的诅咒之剑” |
+
+实测：Q 命中目标造成 15 伤害且玩家不反噬；Q 未命中和左键挥空均成功反噬施放者；物品属性与光效状态已确认。
+
+
 ## 9. 日志、提示与错误处理契约
 
 1. 日志前缀 MUST 带脚本 / BOSS 名：`log.info("InfernoFoehn ...")`。
@@ -963,6 +987,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-30：升级 v1.5.9。新增 8.9 索命剑契约：下界合金剑基础伤害 20、无限耐久、无附魔光效；Q 红色剑气伤害 15，未命中反噬自身 15；左键挥空反噬；命中 25% 反噬一半伤害，跳劈 50%；Lore 包含“每次挥剑必定见血的诅咒之剑”。重点要求反噬使用单参数 `player.damage` 避免递归，Q 剑气必须维护 `hitAny` 命中状态。
 
 - 2026-09-30：升级 v1.5.8。修复杜兰达尔“至圣斩”（原金块蓄力）无伤害：金块投射物 MUST 每 tick 对移动线段做实体路径碰撞检测，不能只在到达点 / 射程终点结算；技能名统一为「至圣斩」。回归实测 200 HP 僵尸被 5 tick 蓄力命中后 200→194（基础威力 1 + 5）。
 
