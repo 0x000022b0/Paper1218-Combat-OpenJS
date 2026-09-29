@@ -843,7 +843,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 ## 附录 D：契约更新记录
 
-- 2026-09-29：升级 v1.5.3。修复 BOSS 名在播报消息中重复：`createBossScoreboard` 的队伍 `ijf_<uuid>` 不再设置 `[炎狱焚风] ` 聊天前缀，改为 `team.setPrefix("")`；队伍仍保留 Husk / Slime UUID 用于统一识别，但原版 `/damage`、`/execute`、死亡消息等不再出现“[炎狱焚风] 炎狱焚风”的双重名称。实测队伍前缀为空、displayName 仍为炎狱焚风。
+- 2026-09-29：升级 v1.5.3。修复 BOSS 名在播报消息中重复：`createBossScoreboard` 的队伍 `ijf_<uuid>` 不再设置 `[炎狱焚风] ` 聊天前缀，改为 `team.setPrefix("")`；队伍仍保留 Husk / Slime UUID 用于统一识别，但原版 `/damage`、`/execute`、死亡消息等不再出现“[炎狱焚风] 炎狱焚风”的双重名称；同时把火种回归提示从“[炎狱焚风] 炎狱焚风恢复了”改为“[炎狱焚风] 恢复了”。实测队伍前缀为空、displayName 仍为炎狱焚风。
 
 
 - 2026-09-29：升级 v1.5.2。炎狱焚风死亡自爆胜利曲：`startDeathSequence()` 切换 `UNICUBE!`（`3368128694`）；从实际开始播放 tick 起计时 1 分 17 秒（`77 × 20` tick），到时自动移除胜利曲并 `/music next` 切回 AllMusic 默认歌单；不加入无缝循环副本，已开始后被手动切走视为结束；期间召唤新 BOSS 时战斗 BGM 优先、胜利曲计时照常并在超时后清理。实测 22:38:58 开始、22:40:15 结束回默认歌单。同步更新 7.11 契约。

@@ -2475,7 +2475,7 @@
                 if (!isHard(boss)
                         && player.getLocation().distanceSquared(boss.carrier.getLocation()) <= 80.0 * 80.0) {
                     player.sendMessage(ChatColor.GOLD + "[炎狱焚风] " + ChatColor.YELLOW
-                            + "炎狱焚风恢复了 " + Math.round(recovered) + " 点生命值！"
+                            + "恢复了 " + Math.round(recovered) + " 点生命值！"
                             + "（剩余火种 " + boss.fireSeedCount + "）");
                 }
             }
