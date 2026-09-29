@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.4
+> **契约版本**：1.5.5
 > **最后更新**：2026-09-30
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -627,6 +627,37 @@ trackedProjectiles[uuid] = {
 
 ---
 
+### 7.13 下界之星复活契约（StarResurrection.js）
+
+**指令：**
+
+- `/starresurrection <all|玩家名> <true|false>`；`addCommand` 权限参数为空，控制台 / 玩家 / 命令方块均可执行。
+- `all` 设置全体默认开关并清空个人覆盖；`玩家名` 必须是当前在线玩家（大小写不敏感），设置个人覆盖，个人覆盖优先于 all。
+- 不带参数输出全局状态、个人覆盖列表与用法。
+
+**效果与状态：**
+
+1. 开启后，玩家受到致命伤害或死亡时，若主背包 0~35 格或副手存在下界之星，扣除 1 枚并复活，保留 `1` 点生命。
+2. 复活同时给予原版不死图腾同款效果：生命恢复 II 45 秒、伤害吸收 II 5 秒、抗火 I 40 秒，并播放图腾音效与粒子。
+3. 状态 PDC key `openjs:star_resurrection_state`，字符串格式 `all:1|uuid:1|uuid:0`；`uuid` 为玩家 UUID，个人覆盖优先于 all；`all` 指令会清空个人覆盖。
+4. 同一玩家同一 tick 只允许一次复活结算（`Bukkit.getCurrentTick()`），防止同一 tick 多个伤害 / 死亡事件重复扣星。
+5. 创造 / 旁观模式玩家不触发；无下界之星时不取消事件，走正常死亡流程。
+
+**事件规则：**
+
+- `EntityDamageEvent`：`player.getHealth() - event.getFinalDamage() <= 0` 时扣星、`setCancelled(true)`，再把生命设为 1；
+- `PlayerDeathEvent`：作为 `/kill` 等绕过普通伤害事件的兜底，扣星后 `setReviveHealth(1.0)` 并 `setCancelled(true)`；
+- `consumeNetherStar` 按物品类型匹配，可兼容自定义名称的下界之星；主背包逐格扣除，副手单独处理。
+
+**禁止：**
+
+- 把复活血量写成 > 玩家最大生命或 0；
+- 只处理 `PlayerDeathEvent` 而忽略致命伤害（会让玩家先进入死亡结算 / 掉落流程）；
+- 不检查个人覆盖与 all 的优先级；
+- 扣星后不取消事件或重复扣星。
+
+---
+
 ## 8. 战斗事件契约
 
 ### 8.1 伤害事件模板
@@ -864,6 +895,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 | `Resurrection.js` | ✅ | 命令方块专用 `/resurrection <秒数>`：最近玩家旁观者模式 + 私发提示 + actionbar/title 倒计时 + 恢复原模式；PDC 兜底重启/重载恢复，契约 v1.5.4 |
 | `ThousandFacedWitch.js` | ✅ | 千面魔女；已修复 `ItemDisplay` 召唤异常与 `damage(amount, null)` 重载歧义；已接入 DouQuQu 无差别攻击模式 |
 | `SuperTNT.js` | ✅ | 自定义 float 爆炸威力 TNT：`/supertnt [0.1~64]`；BlockPlaceEvent → TNTPrimeEvent → EntitySpawnEvent/主循环 → ExplosionPrimeEvent；取消原版整数爆炸并走 5 参数 `createExplosion` |
+| `StarResurrection.js` | ✅ | `/starresurrection <all|玩家名> <true|false>`；致命 `EntityDamageEvent` 优先拦截，`PlayerDeathEvent` 兜底 `/kill`；消耗主背包 / 副手 1 枚下界之星原地复活（1 HP + 图腾效果）；主世界 PDC 持久化，契约 v1.5.5 |
 | `KanKanSword.js` | ❌ 待迁移 | 仍有顶层 `var Material` 等；迁移时保持行为不变 |
 | `CombatStats.js` | ❌ 待迁移 | 仍有顶层 `var Statistic` 等；迁移时保持 PAPI 变量名不变 |
 
@@ -872,6 +904,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-30：升级 v1.5.5。新增 7.13 StarResurrection 契约与 `StarResurrection.js`：`/starresurrection <all|玩家名> <true|false>`；致命 `EntityDamageEvent` 优先拦截，`PlayerDeathEvent` 兜底 `/kill`；扣除主背包 / 副手 1 枚下界之星原地复活（1 HP + 生命恢复 II / 伤害吸收 II / 抗火 I + 图腾音效粒子）；状态存主世界 PDC `openjs:star_resurrection_state`，`all` 清空个人覆盖；实测 `/minecraft:damage XP 1000 minecraft:generic` 与 `/minecraft:kill XP` 各消耗 1 枚并存活。
 
 - 2026-09-30：`EnderSword.js` Q 冷却增加经验条上方 actionbar 倒计时，每 tick 根据 `pearlReadyTick` 显示剩余 tick，冷却结束清空；冷却仍为 12 tick。
 - 2026-09-30：`EnderSword.js` Q 技能增加 12 tick 冷却，冷却按玩家 UUID 维护，冷却期间拦截 Q 不生成弹射物并 actionbar 提示剩余 tick；实测连续 Q 只生成 1 颗、等待 15 tick 后可再次生成。
