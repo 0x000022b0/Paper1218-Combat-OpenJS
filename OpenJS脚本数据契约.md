@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.6
+> **契约版本**：1.5.7
 > **最后更新**：2026-09-30
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -762,6 +762,31 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 | 关闭自身背包 | `InventoryCloseEvent` | ✅ 可触发 `CRAFTING` + `PLAYER`；只能检测关闭，不能检测打开 |
 
 
+### 8.8 杜兰达尔技能契约（`Durendal.js`）
+
+> **⚠️ 重点**
+>
+> - 亡灵判断 MUST 使用 `Tag.ENTITY_TYPES_UNDEAD.isTagged(entity.getType())`；MUST NOT 调用 `LivingEntity#getCategory()`，Paper 1.21.8 会抛 `UnsupportedOperationException: Method no longer applicable. Use Tags instead.`。
+> - 原版服务端收不到“按键按住 / 松开”事件，只收到 `PlayerItemHeldEvent` 的槽位变化；1 键蓄力 MUST 按“开始 / 释放”近似规则实现，并在脚本头或技能说明中写明。
+> - 技能造成的伤害（金块、金色剑气）MUST 使用非玩家源实体（BlockDisplay / Snowball）或等价隔离手段，避免误触发杜兰达尔的亡灵 +4 和普通近战逻辑。
+
+装备与数值：
+
+| 项目 | 规则 |
+| --- | --- |
+| 基础物品 | `Material.GOLDEN_SWORD`，主手攻击伤害 12（+11），攻击速度 1.6（-2.4），无限耐久 |
+| 附魔 | 仅有附魔光效（glint override true），MUST 拦截附魔台 / 铁砧 / `/enchant` |
+| 亡灵增伤 | 主手杜兰达尔 + `ENTITY_ATTACK` / `ENTITY_SWEEP_ATTACK`，目标在 `ENTITY_TYPES_UNDEAD` 标签内时 `event.setDamage(event.getDamage() + 4)` |
+| Q 治疗 | `PlayerDropItemEvent` 拦截丢剑；恢复 15 生命，冷却 200 tick；满血不消耗冷却 |
+| 1 键蓄力 | `PlayerItemHeldEvent.newSlot == 0` 且触发者持有 / 选中杜兰达尔时开始蓄力；蓄力上限 60 tick；每 tick 射程 +1.5、威力 +1，每 10 tick 碰撞半径 +0.2；释放后 120 tick 冷却 |
+| 1 键释放 | 服务器无法监听按键松开；当前实现为“按其他快捷栏键 / 按 4 提前释放，或蓄满 3 秒自动释放” |
+| 金块投射物 | `BlockDisplay` 显示 `GOLD_BLOCK`，金色 DUST 尾迹，速度 1.5 格/tick；命中后在碰撞半径内造成等于蓄力威力的伤害并击退 |
+| 4 键剑气 | `PlayerItemHeldEvent.newSlot == 3`；金色 DUST 剑气，射程 16、速度 1 格/tick、伤害 10、冷却 15 tick；使用不可见 Snowball 作为伤害源 |
+| Lore | MUST 写入：基础伤害 12、亡灵 +4、Q 治疗 15（10 秒）、1 键蓄力金块（最多 3 秒 / 6 秒）、4 键金色剑气（10 伤害 / 15 tick） |
+
+实测：物品属性、Q 治疗 4→19、僵尸伤害 12→16、1 键蓄力后 4 键同时生成金块 `BlockDisplay` 与金色剑气源实体均通过；临时测试脚本与实体已清理。
+
+
 ## 9. 日志、提示与错误处理契约
 
 1. 日志前缀 MUST 带脚本 / BOSS 名：`log.info("InfernoFoehn ...")`。
@@ -938,6 +963,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-30：升级 v1.5.7。新增 8.8 杜兰达尔技能契约：金剑基础伤害 12 / 亡灵 +4 / 无限耐久 / 附魔光效但无法附魔；Q 治疗 15（200 tick）；1 键蓄力金块（最多 60 tick，射程 +1.5、威力 +1 / tick，每 10 tick 碰撞体积增大，120 tick 冷却）；4 键金色剑气（伤害 10，15 tick 冷却）。重点记录 `LivingEntity#getCategory()` 在 Paper 1.21.8 不可用，亡灵判断必须改用 `Tag.ENTITY_TYPES_UNDEAD`。
 
 - 2026-09-30：升级 v1.5.6。新增 8.7 玩家事件可用性清单：Q `PlayerDropItemEvent`、F `PlayerSwapHandItemsEvent`、右键 / 左键 `PlayerInteractEvent`、右键实体 `PlayerInteractAtEntityEvent`、攻击 `PrePlayerAttackEntityEvent`、潜行 / 冲刺 / 跳跃 / 快捷栏 / 聊天 / 命令事件均实测可用；E 打开自身背包无 `InventoryOpenEvent`，只有关闭时 `InventoryCloseEvent(CRAFTING, PLAYER)`；明确 `PlayerInteractEvent` 必须过滤 `EquipmentSlot.HAND`。
 - 2026-09-30：升级 v1.5.5。新增 7.13 StarResurrection 契约与 `StarResurrection.js`：`/starresurrection <all|玩家名> <true|false>`；致命 `EntityDamageEvent` 优先拦截，`PlayerDeathEvent` 兜底 `/kill`；扣除主背包 / 副手 1 枚下界之星原地复活（1 HP + 生命恢复 II / 伤害吸收 II / 抗火 I + 图腾音效粒子）；状态存主世界 PDC `openjs:star_resurrection_state`，`all` 清空个人覆盖；实测 `/minecraft:damage XP 1000 minecraft:generic` 与 `/minecraft:kill XP` 各消耗 1 枚并存活。
