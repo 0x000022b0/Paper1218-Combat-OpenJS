@@ -232,6 +232,7 @@
     var BGM_PHASE2_ID = "1495879966";   // Armageddon（LeaF）
     var BGM_REFRESH_TICKS = 10;         // 0.5 秒检查一次
     var BGM_ADD_RETRY_TICKS = 100;      // 添加失败时 5 秒重试
+    var BGM_PLAYER_RADIUS = 256.0;      // 附近无玩家 / 区块未加载时停止 BGM
 
     // 混合载具：Husk 负责寻路/移动，Slime(size 4) 负责全程浮空的碰撞箱
     var HYBRID_SLIME_SIZE = 4;
@@ -579,6 +580,28 @@
         allMusicCommand(BGM_API + " " + id);
     }
 
+    // BGM 只在 BOSS 所在区块已加载、且附近有玩家（256 格内）时维持；
+    // 避免玩家离开后全服 BGM 无限循环。
+    function isBossBgmAudible(boss) {
+        try {
+            if (!boss || !boss.carrier || !boss.carrier.isValid()) return false;
+            var location = boss.carrier.getLocation();
+            if (!boss.world.isChunkLoaded(location.getBlockX() >> 4, location.getBlockZ() >> 4)) {
+                return false;
+            }
+            var players = boss.world.getPlayers();
+            for (var i = 0; i < players.size(); i++) {
+                var player = players.get(i);
+                if (player && player.isOnline() && !player.isDead()
+                        && player.getLocation().distanceSquared(location)
+                        <= BGM_PLAYER_RADIUS * BGM_PLAYER_RADIUS) {
+                    return true;
+                }
+            }
+        } catch (e) { }
+        return false;
+    }
+
     function getDesiredBgmPhase() {
         if (!BGM_ENABLED) return 0;
         var desired = 0;
@@ -586,6 +609,7 @@
             if (!activeBosses.hasOwnProperty(uuid)) continue;
             var boss = activeBosses[uuid];
             if (!boss || boss.dead) continue;
+            if (!isBossBgmAudible(boss)) continue;
             // 火种阶段 / 火种回归也属于最终阶段，继续沿用二阶段 BGM。
             if (boss.phase2Triggered || boss.fireSeedPhase || boss.fireSeedAnimation) {
                 return 2;
