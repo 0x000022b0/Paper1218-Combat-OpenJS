@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.1
+> **契约版本**：1.5.2
 > **最后更新**：2026-09-29
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -579,12 +579,15 @@ trackedProjectiles[uuid] = {
    - `PlayMusic.playList`：私有静态播放队列；
    - `AllMusic.MUSIC_APIS`：按 API id 取 `netapi.NetiApiMain`；
    - `IMusicApi.getPlayUrl(String)`：预解析播放链接。
-3. 队列中同一 BGM 必须保持恰好一份副本，并位于玩家队列之前；当前曲目结束时副本无缝接唱。脚本每 10 tick 维护一次，失败时 5 秒重试。
+3. 队列中同一阶段 BGM 必须保持恰好一份副本，并位于玩家队列之前；当前曲目结束时副本无缝接唱。脚本每 10 tick 维护一次，失败时 5 秒重试。
 4. 切阶段前必须预解析下一阶段 BGM 的 `playerUrl` 并写回 `SongInfoObj.playerUrl`；链接未就绪不得清空当前 BGM / 发送 `/music next`，避免长时间静音或空闲歌单插播。
-5. BOSS 死亡（`boss.dead=true` 或从 `activeBosses` 移除）、脚本卸载、服务器关闭时必须停止 BGM 并清除队列中的 BGM 条目。
-6. 主线程停止路径可用控制台 `music next`；异步卸载路径禁止 `Bukkit.dispatchCommand`（Paper AsyncCatcher），必须反射把 `PlayMusic.musicLessTime` 置 10 结束当前播放。
-7. BGM 为全服共享；任意一只 BOSS 进入第二阶段即播放二阶段 BGM，所有 BOSS 死亡后停止。没有在线玩家时不发送点歌命令；BOSS 区块未加载或 BOSS 周围 256 格内没有玩家时也必须停止并清除 BGM。
-8. AllMusic 版本升级后字段 / 方法名可能变化，必须重新实测；当前实现跳过歌词加载（写入 `playerUrl` 会走 AllMusic 的“无歌词”分支）。
+5. **死亡自爆胜利曲**：`startDeathSequence()` 必须切换到 `UNICUBE!`（`netapi` ID `3368128694`），且不得加入循环副本，只播放一次。
+6. **胜利曲计时**：从 `nowPlayMusic` 实际变为胜利曲的 tick 起计时 `BGM_VICTORY_DURATION_TICKS = 77 × 20`（1 分 17 秒）；到时必须移除队列中的胜利曲并对当前胜利曲执行 `/music next`，切回 AllMusic 默认歌单。胜利曲已开始播放后被手动切走视为结束，不再强行续播。
+7. 胜利曲期间若召唤新 BOSS，战斗 BGM 优先；胜利曲计时照常进行，超时后清理胜利曲状态，不得覆盖新 BOSS 的战斗 BGM。
+8. 实体异常清理、脚本卸载、服务器关闭时必须停止 BGM 并清除队列中的阶段 BGM 与胜利曲条目。
+9. 主线程停止路径可用控制台 `music next`；异步卸载路径禁止 `Bukkit.dispatchCommand`（Paper AsyncCatcher），必须反射把 `PlayMusic.musicLessTime` 置 10 结束当前播放。
+10. BGM 为全服共享；任意一只 BOSS 进入第二阶段即播放二阶段 BGM，所有 BOSS 死亡后进入胜利曲窗口。没有在线玩家时不发送点歌命令；BOSS 区块未加载或 BOSS 周围 256 格内没有玩家时也必须停止并清除 BGM。
+11. AllMusic 版本升级后字段 / 方法名可能变化，必须重新实测；当前实现跳过歌词加载（写入 `playerUrl` 会走 AllMusic 的“无歌词”分支）。
 
 **禁止：**
 
@@ -828,7 +831,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 | --- | --- | --- |
 | `CallBoss.js` | ✅ | 烈焰棒、6 秒倒计时、BossRegistry v1 |
 | `DouQuQu.js` | ✅ | 无差别攻击模式：`/douququ` 命令、PDC 持久化、共享 API、BOSS 互相攻击 |
-| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（无缝循环 / 阶段切换 / 清理停止），契约 v1.5.1 |
+| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（一阶段 / 二阶段无缝循环、死亡自爆 UNICUBE! 播放 77 秒后切回默认歌单），契约 v1.5.2 |
 | `ThousandFacedWitch.js` | ✅ | 千面魔女；已修复 `ItemDisplay` 召唤异常与 `damage(amount, null)` 重载歧义；已接入 DouQuQu 无差别攻击模式 |
 | `SuperTNT.js` | ✅ | 自定义 float 爆炸威力 TNT：`/supertnt [0.1~64]`；BlockPlaceEvent → TNTPrimeEvent → EntitySpawnEvent/主循环 → ExplosionPrimeEvent；取消原版整数爆炸并走 5 参数 `createExplosion` |
 | `KanKanSword.js` | ❌ 待迁移 | 仍有顶层 `var Material` 等；迁移时保持行为不变 |
@@ -839,6 +842,9 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-29：升级 v1.5.2。炎狱焚风死亡自爆胜利曲：`startDeathSequence()` 切换 `UNICUBE!`（`3368128694`）；从实际开始播放 tick 起计时 1 分 17 秒（`77 × 20` tick），到时自动移除胜利曲并 `/music next` 切回 AllMusic 默认歌单；不加入无缝循环副本，已开始后被手动切走视为结束；期间召唤新 BOSS 时战斗 BGM 优先、胜利曲计时照常并在超时后清理。实测 22:38:58 开始、22:40:15 结束回默认歌单。同步更新 7.11 契约。
+
 
 - 2026-09-29：升级 v1.5.1。新增 7.11 AllMusic 阶段 BGM 契约：`InfernoFoehn.js` 一阶段循环 `22636637`（霊知の太陽信仰 ～ Nuclear Fusion），半血 / 火种阶段循环 `1495879966`（Armageddon）；通过 AllMusic 类加载器反射 `PlayMusic.nowPlayMusic` / `playList` 维护无缝队列副本，预加载 `IMusicApi.getPlayUrl` 写入 `playerUrl` 以避免歌词接口阻塞，死亡 / 清理 / 异步卸载 / BOSS 区块未加载 / 周围 256 格无玩家时停止并清理 BGM 队列。AllMusic 版本升级需重新实测。
 

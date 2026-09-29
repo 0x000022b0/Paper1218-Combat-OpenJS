@@ -15,7 +15,8 @@
  *     火种=玩家数×4 并在 64 格随机分布、12 秒窗口；多目标火球/连续冲撞/全玩家吸附激光/
  *     10 次远程硬直/15 护甲 10 韧性/末影水晶凋零等强化机制；战斗聊天提示关闭。
  *   - AllMusic BGM：一阶段循环《霊知の太陽信仰 ～ Nuclear Fusion》（22636637），
- *     半血引燃后循环《Armageddon》（1495879966）；死亡/清理/脚本卸载时停止。
+ *     半血引燃后循环《Armageddon》（1495879966）；死亡自爆播放《UNICUBE!》（3368128694），
+ *     播放到 1 分 17 秒自动结束并切回默认歌单；清理/脚本卸载时停止。
  *
  * 攻击手段：
  *   1. 杀戮光环：6 格内玩家被点燃，每 0.1 秒受到 1 点伤害（会重置受击无敌帧）
@@ -225,11 +226,14 @@
     //     把当前 BGM 对象复制回播放队列，实现无缝单曲循环。
     //   - 一阶段循环《霊知の太陽信仰 ～ Nuclear Fusion》
     //   - 二阶段（引燃倒计时开始后）循环《Armageddon》
+    //   - 死亡自爆时播放《UNICUBE!》胜利曲，播放到 1 分 17 秒自动结束并切回默认歌单
     //   - 战斗结束 / 脚本卸载时停止 BGM，并清掉播放队列里的 BGM 缓存。
     var BGM_ENABLED = true;
     var BGM_API = "netapi";
     var BGM_PHASE1_ID = "22636637";     // 霊知の太陽信仰 ～ Nuclear Fusion（上海アリス幻樂団）
     var BGM_PHASE2_ID = "1495879966";   // Armageddon（LeaF）
+    var BGM_VICTORY_ID = "3368128694";  // UNICUBE!（棍圣 / PROPHECY）死亡自爆胜利曲，仅播放一次
+    var BGM_VICTORY_DURATION_TICKS = 77 * 20; // 1 分 17 秒
     var BGM_REFRESH_TICKS = 10;         // 0.5 秒检查一次
     var BGM_ADD_RETRY_TICKS = 100;      // 添加失败时 5 秒重试
     var BGM_PLAYER_RADIUS = 256.0;      // 附近无玩家 / 区块未加载时停止 BGM
@@ -271,13 +275,19 @@
     var allMusicRefs = null;        // { playMusicClass, nowField, listField, musicApisField }
     var allMusicUnavailable = false;
     var allMusicApiCache = null;    // { api, playUrlMethod }
-    var bgmActivePhase = 0;         // 0=未播放 / 1=一阶段 / 2=二阶段
+    var bgmActivePhase = 0;         // 0=未播放 / 1=一阶段 / 2=二阶段 / 3=死亡胜利曲
     var bgmP1LastAddTick = -10000;
     var bgmP2LastAddTick = -10000;
     var bgmP1UrlLoading = false;
     var bgmP2UrlLoading = false;
     var bgmP1UrlFailed = false;
     var bgmP2UrlFailed = false;
+    var bgmVictoryActive = false;
+    var bgmVictoryStartedTick = 0;  // 胜利曲实际开始播放的 tick；0 表示尚未开始
+    var bgmVictoryEndTick = 0;      // 胜利曲自动结束 tick（开始 + 77 秒）
+    var bgmVLastAddTick = -10000;
+    var bgmVUrlLoading = false;
+    var bgmVUrlFailed = false;
     var bgmShuttingDown = false;
 
     // ---------------------------------------------------------------------------
@@ -370,7 +380,8 @@
 
     function isBgmSong(song) {
         var id = songId(song);
-        return (id === BGM_PHASE1_ID || id === BGM_PHASE2_ID) && songApi(song) === BGM_API;
+        return (id === BGM_PHASE1_ID || id === BGM_PHASE2_ID || id === BGM_VICTORY_ID)
+                && songApi(song) === BGM_API;
     }
 
     // 预解析 BGM 的真实播放链接。AllMusic 默认在歌曲真正开始时才调用 getPlayUrl + getLyric，
@@ -453,9 +464,12 @@
             if (phase === 1) {
                 bgmP1UrlLoading = false;
                 bgmP1UrlFailed = !ok;
-            } else {
+            } else if (phase === 2) {
                 bgmP2UrlLoading = false;
                 bgmP2UrlFailed = !ok;
+            } else {
+                bgmVUrlLoading = false;
+                bgmVUrlFailed = !ok;
             }
         }
     }
@@ -466,17 +480,26 @@
             if (phase === 1) {
                 bgmP1UrlLoading = false;
                 bgmP1UrlFailed = false;
-            } else {
+            } else if (phase === 2) {
                 bgmP2UrlLoading = false;
                 bgmP2UrlFailed = false;
+            } else {
+                bgmVUrlLoading = false;
+                bgmVUrlFailed = false;
             }
             return;
         }
-        if ((phase === 1 && bgmP1UrlLoading) || (phase === 2 && bgmP2UrlLoading)) return;
+        if ((phase === 1 && bgmP1UrlLoading)
+                || (phase === 2 && bgmP2UrlLoading)
+                || (phase === 3 && bgmVUrlLoading)) {
+            return;
+        }
         if (phase === 1) {
             bgmP1UrlLoading = true;
-        } else {
+        } else if (phase === 2) {
             bgmP2UrlLoading = true;
+        } else {
+            bgmVUrlLoading = true;
         }
         try {
             task.thread(function () {
@@ -485,8 +508,10 @@
         } catch (e) {
             if (phase === 1) {
                 bgmP1UrlLoading = false;
-            } else {
+            } else if (phase === 2) {
                 bgmP2UrlLoading = false;
+            } else {
+                bgmVUrlLoading = false;
             }
         }
     }
@@ -568,13 +593,16 @@
 
     // 通过 AllMusic 异步解析歌曲并加入队列；解析需要访问网易云 API，通常需要数秒。
     function requestBgmAdd(phase) {
-        var id = phase === 1 ? BGM_PHASE1_ID : BGM_PHASE2_ID;
-        var lastTick = phase === 1 ? bgmP1LastAddTick : bgmP2LastAddTick;
+        var id = phase === 1 ? BGM_PHASE1_ID : (phase === 2 ? BGM_PHASE2_ID : BGM_VICTORY_ID);
+        var lastTick = phase === 1 ? bgmP1LastAddTick
+                : (phase === 2 ? bgmP2LastAddTick : bgmVLastAddTick);
         if (globalTick - lastTick < BGM_ADD_RETRY_TICKS) return;
         if (phase === 1) {
             bgmP1LastAddTick = globalTick;
-        } else {
+        } else if (phase === 2) {
             bgmP2LastAddTick = globalTick;
+        } else {
+            bgmVLastAddTick = globalTick;
         }
         if (Bukkit.getOnlinePlayers().isEmpty()) return;
         allMusicCommand(BGM_API + " " + id);
@@ -604,7 +632,7 @@
 
     function getDesiredBgmPhase() {
         if (!BGM_ENABLED) return 0;
-        var desired = 0;
+        var battlePhase = 0;
         for (var uuid in activeBosses) {
             if (!activeBosses.hasOwnProperty(uuid)) continue;
             var boss = activeBosses[uuid];
@@ -612,16 +640,113 @@
             if (!isBossBgmAudible(boss)) continue;
             // 火种阶段 / 火种回归也属于最终阶段，继续沿用二阶段 BGM。
             if (boss.phase2Triggered || boss.fireSeedPhase || boss.fireSeedAnimation) {
-                return 2;
+                battlePhase = 2;
+                break;
             }
-            desired = 1;
+            battlePhase = 1;
         }
-        return desired;
+        if (battlePhase > 0) {
+            return battlePhase;
+        }
+        // 死亡自爆后的胜利曲持续到 1 分 17 秒；若期间又开了新 BOSS，则新 BOSS 的战斗 BGM 优先。
+        return bgmVictoryActive ? 3 : 0;
+    }
+
+    function beginVictoryBgm() {
+        if (!BGM_ENABLED) return;
+        if (bgmVictoryActive) {
+            // 已经在一轮胜利曲窗口内，不重复重置，避免连续死亡时无限延长。
+            return;
+        }
+        bgmVictoryActive = true;
+        bgmVictoryStartedTick = 0;
+        bgmVictoryEndTick = 0;
+        bgmVLastAddTick = -10000;
+        bgmVUrlLoading = false;
+        bgmVUrlFailed = false;
+        log.info("InfernoFoehn 死亡自爆开始，准备播放胜利 BGM：" + BGM_VICTORY_ID
+                + "（" + (BGM_VICTORY_DURATION_TICKS / 20) + " 秒后切回默认歌单）。");
+    }
+
+    function endVictoryBgm() {
+        bgmVictoryActive = false;
+        bgmVictoryStartedTick = 0;
+        bgmVictoryEndTick = 0;
+        bgmVLastAddTick = -10000;
+        bgmVUrlLoading = false;
+        bgmVUrlFailed = false;
+        removeQueuedBgm(BGM_VICTORY_ID);
+        var current = getBgmCurrent();
+        if (songId(current) === BGM_VICTORY_ID && songApi(current) === BGM_API) {
+            allMusicCommand("next");
+        }
+        if (bgmActivePhase === 3) {
+            bgmActivePhase = 0;
+        }
+    }
+
+    function maintainVictoryBgm() {
+        if (!bgmVictoryActive) return;
+        if (Bukkit.getOnlinePlayers().isEmpty()) {
+            // 无人时取消胜利曲，避免玩家很久以后加入才突然播放。
+            endVictoryBgm();
+            return;
+        }
+        var list = getBgmQueue();
+        if (!list) return;
+        var current = getBgmCurrent();
+
+        if (bgmVictoryStartedTick > 0 && globalTick >= bgmVictoryEndTick) {
+            log.info("InfernoFoehn 胜利 BGM 已播放 "
+                    + (BGM_VICTORY_DURATION_TICKS / 20) + " 秒，切回默认歌单。");
+            endVictoryBgm();
+            return;
+        }
+
+        if (songId(current) === BGM_VICTORY_ID && songApi(current) === BGM_API) {
+            bgmActivePhase = 3;
+            if (bgmVictoryStartedTick <= 0) {
+                bgmVictoryStartedTick = globalTick;
+                bgmVictoryEndTick = globalTick + BGM_VICTORY_DURATION_TICKS;
+                log.info("InfernoFoehn 胜利 BGM 开始计时：" + BGM_VICTORY_ID);
+            }
+            // 胜利曲只播放一次：清掉队列里的重复副本与战斗 BGM 缓存。
+            removeQueuedBgm(BGM_VICTORY_ID);
+            removeQueuedBgm(BGM_PHASE1_ID);
+            removeQueuedBgm(BGM_PHASE2_ID);
+            return;
+        }
+
+        // 已经开始播放后又被切走（玩家手动 next 等）：视为已结束，不再强行续播。
+        if (bgmVictoryStartedTick > 0) {
+            endVictoryBgm();
+            return;
+        }
+
+        // 尚未开始：清掉战斗 BGM 队列，等胜利曲解析并预加载播放链接后切歌。
+        removeQueuedBgm(BGM_PHASE1_ID);
+        removeQueuedBgm(BGM_PHASE2_ID);
+        var queued = findQueuedBgm(BGM_VICTORY_ID);
+        if (queued == null) {
+            requestBgmAdd(3);
+            return;
+        }
+        ensureBgmUrlPreloaded(queued, 3);
+        if (!isBgmUrlReady(queued) && !bgmVUrlFailed) {
+            // 预加载期间保留原本正在播放的音乐（通常是二阶段 BGM），避免静音。
+            return;
+        }
+        moveQueuedBgmToFront(queued);
+        bgmActivePhase = 3;
+        if (current != null) {
+            allMusicCommand("next");
+        }
     }
 
     function maintainPhase1Bgm() {
         var list = getBgmQueue();
         if (!list) return;
+        removeQueuedBgm(BGM_VICTORY_ID);
         var current = getBgmCurrent();
         if (isBgmSong(current) && songId(current) === BGM_PHASE1_ID) {
             bgmActivePhase = 1;
@@ -658,6 +783,7 @@
     function maintainPhase2Bgm() {
         var list = getBgmQueue();
         if (!list) return;
+        removeQueuedBgm(BGM_VICTORY_ID);
         var current = getBgmCurrent();
         if (isBgmSong(current) && songId(current) === BGM_PHASE2_ID) {
             bgmActivePhase = 2;
@@ -691,6 +817,7 @@
         if (!allMusicRefs && !resolveAllMusicRefs()) return;
         removeQueuedBgm(BGM_PHASE1_ID);
         removeQueuedBgm(BGM_PHASE2_ID);
+        removeQueuedBgm(BGM_VICTORY_ID);
         var current = getBgmCurrent();
         if (isBgmSong(current)) {
             allMusicCommand("next");
@@ -700,6 +827,11 @@
         bgmP2LastAddTick = -10000;
         bgmP1UrlFailed = false;
         bgmP2UrlFailed = false;
+        bgmVictoryActive = false;
+        bgmVictoryStartedTick = 0;
+        bgmVictoryEndTick = 0;
+        bgmVLastAddTick = -10000;
+        bgmVUrlFailed = false;
     }
 
     // 脚本卸载回调在异步线程执行，不能调用 Bukkit.dispatchCommand（Paper AsyncCatcher）。
@@ -709,6 +841,7 @@
         if (!allMusicRefs && !resolveAllMusicRefs()) return;
         removeQueuedBgm(BGM_PHASE1_ID);
         removeQueuedBgm(BGM_PHASE2_ID);
+        removeQueuedBgm(BGM_VICTORY_ID);
         var current = getBgmCurrent();
         if (isBgmSong(current)) {
             try {
@@ -717,12 +850,21 @@
             } catch (e) { }
         }
         bgmActivePhase = 0;
+        bgmVictoryActive = false;
+        bgmVictoryStartedTick = 0;
+        bgmVictoryEndTick = 0;
     }
 
     function updateBgm() {
         if (!BGM_ENABLED) return;
         if (globalTick % BGM_REFRESH_TICKS !== 0) return;
         if (!resolveAllMusicRefs()) return;
+        if (bgmVictoryActive && bgmVictoryStartedTick > 0
+                && globalTick >= bgmVictoryEndTick) {
+            log.info("InfernoFoehn 胜利 BGM 已播放满 "
+                    + (BGM_VICTORY_DURATION_TICKS / 20) + " 秒，结束并切回默认歌单。");
+            endVictoryBgm();
+        }
         var desired = getDesiredBgmPhase();
         if (desired === 0) {
             if (bgmActivePhase !== 0) {
@@ -732,8 +874,10 @@
         }
         if (desired === 1) {
             maintainPhase1Bgm();
-        } else {
+        } else if (desired === 2) {
             maintainPhase2Bgm();
+        } else {
+            maintainVictoryBgm();
         }
     }
 
@@ -3790,6 +3934,8 @@ function finishPhaseTransition(boss) {
 function startDeathSequence(boss) {
     if (!boss || boss.dead) return;
     boss.dead = true;
+    // 死亡自爆开始即进入胜利 BGM：UNICUBE!，播放 1 分 17 秒后切回默认歌单。
+    beginVictoryBgm();
     boss.transitioning = false;
     boss.pendingPhase = false;
     boss.phase2Triggered = true;
