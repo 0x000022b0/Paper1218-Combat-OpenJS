@@ -4388,14 +4388,11 @@ function drawGuardianLaser(world, from, to) {
     });
 
     // 脚本卸载 / 服务器关闭时停止 BGM，避免声音在重载后继续循环。
+    // 卸载回调可能在异步线程，统一使用不调用 Bukkit 命令的反射停止路径。
     task.bindToUnload(function() {
         try {
             bgmShuttingDown = true;
-            if (Bukkit.isPrimaryThread()) {
-                stopBgm();
-            } else {
-                stopBgmForUnload();
-            }
+            stopBgmForUnload();
         } catch (e) { }
     });
 
