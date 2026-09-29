@@ -3,7 +3,7 @@
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
 > **契约版本**：1.5.4
-> **最后更新**：2026-09-29
+> **最后更新**：2026-09-30
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
 ---
@@ -374,7 +374,9 @@ BOSS 脚本接入契约：
 
 `GetEquip.js` 通过 `setShared("EquipRegistry", api)` 提供通用装备获取 API；装备脚本通过
 `getShared("EquipRegistry").register(def)` 注册。指令格式统一为 `/equip <槽位> [装备名]`，
-当前武器槽位为 `arms`，例如 `/equip arms 村好剑`。
+当前武器槽位为 `arms`，例如 `/equip arms 村好剑`；盾牌使用 `offhand` 槽位，
+`/equip shield 基础盾牌` 是 `/equip offhand 基础盾牌` 的别名写法。
+GetEquip 目前内置槽位别名：`weapon` / `weapons` → `arms`，`shield` / `off_hand` / `secondary` → `offhand`。
 
 装备定义字段：
 
@@ -871,6 +873,7 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 ## 附录 D：契约更新记录
 
+- 2026-09-30：新增 `BasicShield.js`「基础盾牌」——副手 +10 最大生命、无限耐久、无法附魔但强制附魔光效、固有 20% 减伤、格挡时获得 7 tick 无敌窗口；装备框架补充 `shield -> offhand`、`weapon -> arms` 槽位别名，并在 6.11 记录槽位别名规则。
 - 2026-09-29：升级 v1.5.4。新增 7.12 `Resurrection.js` 契约：命令方块专用 `/resurrection <秒数>`（1~600 秒），以执行位置为基准找同世界最近玩家，保存原模式/飞行状态后切换旁观者，私发“已经切换为旁观者模式，请尽快前往死亡地点”，每秒 actionbar + 10/5/3/2/1 秒 title 倒计时，结束后恢复原模式与飞行状态；支持重复触发刷新计时、玩家退出立即恢复、PDC `resurrection_prev_mode` 在服务器重启/脚本重载后兜底恢复。实测命令方块 `/resurrection 5` 在 XP 上完成切换与恢复。
 
 

@@ -51,8 +51,19 @@
         chest: "胸甲",
         legs: "护腿",
         feet: "靴子",
-        offhand: "副手",
+        offhand: "副手 / 盾牌",
+        shield: "盾牌",
         accessory: "饰品"
+    };
+
+    // 槽位别名：统一解析到规范槽位，方便后续扩展。
+    // 例如 /equip shield 基础盾牌 等价于 /equip offhand 基础盾牌。
+    var SLOT_ALIASES = {
+        weapon: "arms",
+        weapons: "arms",
+        shield: "offhand",
+        off_hand: "offhand",
+        secondary: "offhand"
     };
 
     // -----------------------------------------------------------------------
@@ -65,7 +76,8 @@
     // 工具函数
     // -----------------------------------------------------------------------
     function normalizeSlot(value) {
-        return String(value == null ? "" : value).trim().toLowerCase();
+        var normalized = String(value == null ? "" : value).trim().toLowerCase();
+        return SLOT_ALIASES[normalized] || normalized;
     }
 
     function normalizeName(value) {
@@ -323,6 +335,8 @@
         sender.sendMessage(ChatColor.YELLOW + "/equip <槽位>" + ChatColor.GRAY + " —— 查看该槽位已注册装备");
         sender.sendMessage(ChatColor.YELLOW + "/equip arms [武器名]" + ChatColor.GRAY
                 + " —— 获取指定武器，例：/equip arms 村好剑");
+        sender.sendMessage(ChatColor.YELLOW + "/equip shield 基础盾牌" + ChatColor.GRAY
+                + " —— 获取盾牌（等价于 /equip offhand 基础盾牌）");
     }
 
     function sendSlotList(sender) {
@@ -407,7 +421,16 @@
                 var arr = toArray(args);
                 if (arr.length <= 1) {
                     var slots = listSlots();
-                    for (var i = 0; i < slots.length; i++) result.push(slots[i]);
+                    // 同时补全槽位别名，例如 shield -> offhand / weapon -> arms。
+                    if (slots.indexOf("shield") === -1) slots.push("shield");
+                    if (slots.indexOf("weapon") === -1) slots.push("weapon");
+
+                    var slotPrefix = arr.length === 1 ? normalizeName(arr[0]) : "";
+                    for (var i = 0; i < slots.length; i++) {
+                        if (!slotPrefix || normalizeName(slots[i]).indexOf(slotPrefix) === 0) {
+                            result.push(slots[i]);
+                        }
+                    }
                     return toJavaList(result);
                 }
 
