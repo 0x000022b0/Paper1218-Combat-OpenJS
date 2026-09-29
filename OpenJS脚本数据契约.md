@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.7
+> **契约版本**：1.5.8
 > **最后更新**：2026-09-30
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -778,13 +778,13 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 | 附魔 | 仅有附魔光效（glint override true），MUST 拦截附魔台 / 铁砧 / `/enchant` |
 | 亡灵增伤 | 主手杜兰达尔 + `ENTITY_ATTACK` / `ENTITY_SWEEP_ATTACK`，目标在 `ENTITY_TYPES_UNDEAD` 标签内时 `event.setDamage(event.getDamage() + 4)` |
 | Q 治疗 | `PlayerDropItemEvent` 拦截丢剑；恢复 15 生命，冷却 200 tick；满血不消耗冷却 |
-| 1 键蓄力 | `PlayerItemHeldEvent.newSlot == 0` 且触发者持有 / 选中杜兰达尔时开始蓄力；蓄力上限 60 tick；每 tick 射程 +1.5、威力 +1，每 10 tick 碰撞半径 +0.2；释放后 120 tick 冷却 |
+| 1 键至圣斩 | `PlayerItemHeldEvent.newSlot == 0` 且触发者持有 / 选中杜兰达尔时开始蓄力；蓄力上限 60 tick；每 tick 射程 +1.5、威力 +1，每 10 tick 碰撞半径 +0.2；释放后 120 tick 冷却 |
 | 1 键释放 | 服务器无法监听按键松开；当前实现为“按其他快捷栏键 / 按 4 提前释放，或蓄满 3 秒自动释放” |
-| 金块投射物 | `BlockDisplay` 显示 `GOLD_BLOCK`，金色 DUST 尾迹，速度 1.5 格/tick；命中后在碰撞半径内造成等于蓄力威力的伤害并击退 |
+| 至圣斩金块投射物 | `BlockDisplay` 显示 `GOLD_BLOCK`，金色 DUST 尾迹，速度 1.5 格/tick；MUST 每 tick 对“上一位置 → 下一位置”线段做实体路径碰撞检测，命中后在碰撞半径内造成等于蓄力威力的伤害并击退；只检查到达点会因速度过快穿过生物导致 0 伤害 |
 | 4 键剑气 | `PlayerItemHeldEvent.newSlot == 3`；金色 DUST 剑气，射程 16、速度 1 格/tick、伤害 10、冷却 15 tick；使用不可见 Snowball 作为伤害源 |
-| Lore | MUST 写入：基础伤害 12、亡灵 +4、Q 治疗 15（10 秒）、1 键蓄力金块（最多 3 秒 / 6 秒）、4 键金色剑气（10 伤害 / 15 tick） |
+| Lore | MUST 写入：基础伤害 12、亡灵 +4、Q 治疗 15（10 秒）、长按 1 至圣斩（最多 3 秒 / 6 秒）、按 4 金色剑气（10 伤害 / 15 tick） |
 
-实测：物品属性、Q 治疗 4→19、僵尸伤害 12→16、1 键蓄力后 4 键同时生成金块 `BlockDisplay` 与金色剑气源实体均通过；临时测试脚本与实体已清理。
+实测：物品属性、Q 治疗 4→19、僵尸伤害 12→16、1 键至圣斩后 4 键同时生成金块 `BlockDisplay` 与金色剑气源实体均通过；修复实体路径碰撞后，200 HP 僵尸被 5 tick 至圣斩命中 200→194（基础 1 + 5 = 6 伤害）；临时测试脚本与实体已清理。
 
 
 ## 9. 日志、提示与错误处理契约
@@ -963,6 +963,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-30：升级 v1.5.8。修复杜兰达尔“至圣斩”（原金块蓄力）无伤害：金块投射物 MUST 每 tick 对移动线段做实体路径碰撞检测，不能只在到达点 / 射程终点结算；技能名统一为「至圣斩」。回归实测 200 HP 僵尸被 5 tick 蓄力命中后 200→194（基础威力 1 + 5）。
 
 - 2026-09-30：升级 v1.5.7。新增 8.8 杜兰达尔技能契约：金剑基础伤害 12 / 亡灵 +4 / 无限耐久 / 附魔光效但无法附魔；Q 治疗 15（200 tick）；1 键蓄力金块（最多 60 tick，射程 +1.5、威力 +1 / tick，每 10 tick 碰撞体积增大，120 tick 冷却）；4 键金色剑气（伤害 10，15 tick 冷却）。重点记录 `LivingEntity#getCategory()` 在 Paper 1.21.8 不可用，亡灵判断必须改用 `Tag.ENTITY_TYPES_UNDEAD`。
 

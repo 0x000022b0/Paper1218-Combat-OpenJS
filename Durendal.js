@@ -7,14 +7,14 @@
  *   - 金剑魔改，基础伤害 12，无限耐久，有附魔光效但无法附魔。
  *   - 对亡灵生物伤害 +4。
  *   - Q：恢复 15 生命，10 秒冷却。
- *   - 长按 1（快捷栏第 1 格）：蓄力金块；每 tick 射程 +1.5、威力 +1，
+ *   - 长按 1（快捷栏第 1 格）：至圣斩（蓄力金块）；每 tick 射程 +1.5、威力 +1，
  *     每 10 tick 碰撞体积增大；最多蓄力 3 秒；发射后 6 秒冷却。
  *   - 按 4：发射金色粒子剑气，伤害 10，15 tick 冷却。
  *
  * 说明：原版服务器收不到“按键按下/松开”事件，只能收到快捷栏选择变化
  *       （PlayerItemHeldEvent）。因此“长按 1”用以下方式近似：
  *       - 按 1（或按 1 选中杜兰达尔）开始蓄力；
- *       - 再按其他快捷栏键 / 按 4 视为释放，按当前蓄力值发射金块；
+ *       - 再按其他快捷栏键 / 按 4 视为释放，按当前蓄力值释放至圣斩金块；
  *       - 如果不按其他键，蓄满 3 秒后自动发射；
  *       - 如果杜兰达尔已在第 1 格且已选中，需要先按其他数字键再按 1 才能重新开始蓄力。
  */
@@ -63,6 +63,7 @@
     // -----------------------------------------------------------------------
     var SWORD_ID = "durendal";
     var SWORD_NAME = "杜兰达尔";
+    var CHARGE_SKILL_NAME = "至圣斩";
     var EQUIP_SLOT = "arms";
 
     var SWORD_KEY = new NamespacedKey(plugin, "durendal_item");
@@ -210,6 +211,19 @@
         }
     }
 
+    function distanceSquaredToSegment(point, start, end) {
+        var segment = end.clone().subtract(start);
+        var lengthSquared = segment.lengthSquared();
+        if (lengthSquared < 0.0001) return point.distanceSquared(start);
+
+        var t = point.clone().subtract(start).dot(segment) / lengthSquared;
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+
+        var closest = start.clone().add(segment.multiply(t));
+        return point.distanceSquared(closest);
+    }
+
     // -----------------------------------------------------------------------
     // 物品构建 / 净化 / 注册
     // -----------------------------------------------------------------------
@@ -223,7 +237,7 @@
             ChatColor.YELLOW + "基础伤害：" + ChatColor.RED + "12",
             ChatColor.YELLOW + "对亡灵生物伤害：" + ChatColor.RED + "+4",
             ChatColor.AQUA + "Q " + ChatColor.GRAY + "恢复 15 生命（冷却 10 秒）",
-            ChatColor.AQUA + "长按 1 " + ChatColor.GRAY + "蓄力金块（最多 3 秒，冷却 6 秒）",
+            ChatColor.AQUA + "长按 1 " + ChatColor.GRAY + CHARGE_SKILL_NAME + "（最多 3 秒，冷却 6 秒）",
             ChatColor.AQUA + "按 4 " + ChatColor.GRAY + "发射金色剑气（伤害 10，冷却 15 tick）"
         ]));
 
@@ -407,14 +421,14 @@
 
         if (globalTick < (chargeCooldownUntil[uuid] || 0)) {
             var remain = Math.ceil(((chargeCooldownUntil[uuid] || 0) - globalTick) / 20.0);
-            sendActionBar(player, ChatColor.GRAY + "金块蓄力冷却中："
+            sendActionBar(player, ChatColor.GRAY + CHARGE_SKILL_NAME + "冷却中："
                     + ChatColor.YELLOW + remain + ChatColor.GRAY + " 秒");
             return false;
         }
 
         if (activeCharges[uuid]) return true;
         activeCharges[uuid] = { player: player, ticks: 0 };
-        sendActionBar(player, ChatColor.GOLD + "开始蓄力金块……");
+        sendActionBar(player, ChatColor.GOLD + "开始蓄力" + CHARGE_SKILL_NAME + "……");
         return true;
     }
 
@@ -431,9 +445,9 @@
         chargeCooldownUntil[uuid] = globalTick + CHARGE_COOLDOWN_TICKS;
 
         if (autoRelease === true) {
-            sendActionBar(player, ChatColor.GOLD + "金块蓄力已满 3 秒，自动发射！");
+            sendActionBar(player, ChatColor.GOLD + CHARGE_SKILL_NAME + "蓄力已满 3 秒，自动释放！");
         } else {
-            sendActionBar(player, ChatColor.GOLD + "金块已发射（蓄力 "
+            sendActionBar(player, ChatColor.GOLD + CHARGE_SKILL_NAME + "已释放（蓄力 "
                     + ChatColor.YELLOW + ticks + ChatColor.GOLD + " tick）。");
         }
     }
@@ -453,7 +467,7 @@
 
             var display = world.spawn(spawnLocation, BlockDisplayClass);
             if (!display) {
-                sendMessage(player, ChatColor.RED + "金块生成失败，请稍后再试。");
+                sendMessage(player, ChatColor.RED + CHARGE_SKILL_NAME + "生成失败，请稍后再试。");
                 return;
             }
 
@@ -616,7 +630,7 @@
                 charge.ticks++;
                 if (charge.ticks % 2 === 0) {
                     var seconds = (charge.ticks / 20.0).toFixed(1);
-                    sendActionBar(player, ChatColor.GOLD + "金块蓄力："
+                    sendActionBar(player, ChatColor.GOLD + CHARGE_SKILL_NAME + "蓄力："
                             + ChatColor.YELLOW + seconds + ChatColor.GOLD + " / 3.0 秒");
                     spawnChargeParticles(player, charge.ticks);
                 }
@@ -651,6 +665,38 @@
         activeGoldBlocks.splice(index, 1);
     }
 
+    function findGoldBlockEntityCollision(goldBlock, start, end) {
+        try {
+            var startVector = start.toVector();
+            var endVector = end.toVector();
+            var mid = new Location(goldBlock.world,
+                    (start.getX() + end.getX()) / 2.0,
+                    (start.getY() + end.getY()) / 2.0,
+                    (start.getZ() + end.getZ()) / 2.0);
+            var searchRadius = goldBlock.hitRadius + GOLD_BLOCK_SPEED + 1.0;
+            var nearby = goldBlock.world.getNearbyEntities(mid, searchRadius, searchRadius, searchRadius);
+            var iterator = nearby.iterator();
+
+            while (iterator.hasNext()) {
+                var target = iterator.next();
+                if (target === goldBlock.owner) continue;
+                if (!(target instanceof LivingEntity)) continue;
+                if (target.isDead() || !target.isValid()) continue;
+
+                var center = target.getLocation().clone()
+                        .add(0, target.getHeight() / 2.0, 0).toVector();
+                var threshold = goldBlock.hitRadius + target.getWidth() / 2.0 + 0.2;
+                if (distanceSquaredToSegment(center, startVector, endVector)
+                        <= threshold * threshold) {
+                    return target;
+                }
+            }
+        } catch (e) {
+            log.error("Durendal 金块实体碰撞检测异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+        }
+        return null;
+    }
+
     function impactGoldBlock(goldBlock, location) {
         try {
             var nearby = goldBlock.world.getNearbyEntities(location,
@@ -663,7 +709,7 @@
                 if (!(target instanceof LivingEntity)) continue;
                 if (target.isDead() || !target.isValid()) continue;
 
-                dealAbilityDamage(target, goldBlock.power, goldBlock.display);
+                dealAbilityDamage(target, goldBlock.power, null);
                 try {
                     var push = goldBlock.direction.clone().multiply(0.8);
                     push.setY(0.35);
@@ -708,6 +754,16 @@
                 var next = goldBlock.location.clone()
                         .add(goldBlock.direction.clone().multiply(GOLD_BLOCK_SPEED));
                 goldBlock.travelled += GOLD_BLOCK_SPEED;
+
+                // 先做实体路径碰撞检测，避免高速金块直接穿过生物。
+                var hitTarget = findGoldBlockEntityCollision(goldBlock, goldBlock.location, next);
+                if (hitTarget != null) {
+                    var impactLocation = hitTarget.getLocation().clone()
+                            .add(0, hitTarget.getHeight() / 2.0, 0);
+                    impactGoldBlock(goldBlock, impactLocation);
+                    removeGoldBlockAt(i, impactLocation);
+                    continue;
+                }
 
                 if (goldBlock.travelled >= goldBlock.maxRange
                         || isBlockedLocation(goldBlock.world, next)) {
@@ -965,5 +1021,5 @@
     } catch (e) { }
 
     log.info("Durendal 已加载：/equip arms " + SWORD_NAME
-            + "（伤害 12 / 亡灵 +4 / Q 治疗 / 1 蓄力金块 / 4 金色剑气）");
+            + "（伤害 12 / 亡灵 +4 / Q 治疗 / 1 " + CHARGE_SKILL_NAME + " / 4 金色剑气）");
 })();
