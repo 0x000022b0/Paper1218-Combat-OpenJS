@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.3
+> **契约版本**：1.5.4
 > **最后更新**：2026-09-29
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -598,6 +598,33 @@ trackedProjectiles[uuid] = {
 
 ---
 
+### 7.12 Resurrection 旁观者倒计时契约（Resurrection.js）
+
+**指令：**
+
+- `/resurrection <秒数>`，整数，单位秒，范围 `1 ~ 600`；`addCommand` 权限参数为空，命令方块可直接执行。
+- 执行位置：`BlockCommandSender.getBlock().getLocation()`；玩家手动执行时使用玩家位置（便于测试）。
+- 目标：同世界内距离执行位置最近的在线、非死亡玩家。
+
+**行为：**
+
+1. 保存目标当前 `GameMode`、`allowFlight`、`isFlying`；把 `GameMode` 写入玩家 PDC（`openjs:resurrection_prev_mode`）作为兜底。
+2. `player.setGameMode(GameMode.SPECTATOR)`，私发文本 `已经切换为旁观者模式，请尽快前往死亡地点`。
+3. 每个游戏 tick 递减 `endTick = 开始 tick + 秒数 × 20`；每秒刷新 actionbar `旁观者模式剩余 X 秒`，剩余 10 / 5 / 3 / 2 / 1 秒时额外发送 title，最后 3 秒红色。
+4. 到时恢复 `previousGameMode` / `allowFlight` / `isFlying`，清除 PDC 标记，并提示倒计时结束。
+5. 同一玩家重复触发时保留最初保存的模式，只刷新 `endTick`。
+6. `PlayerQuitEvent` 时立即恢复并清除标记；`PlayerJoinEvent` 与脚本加载后的 `task.main` 检查 PDC 标记并兜底恢复。
+7. `task.bindToUnload` 尽力恢复；异步线程调用 Bukkit 失败时必须保留 PDC 标记，由下次加入 / 新脚本实例恢复。
+
+**禁止：**
+
+- 使用 `task.delay` 安排最终恢复（脚本卸载会取消，玩家会卡在旁观者）；
+- 把目标玩家当前模式直接写死为 SURVIVAL / CREATIVE；
+- 只改游戏模式而不恢复飞行状态；
+- 允许控制台执行时随机挑玩家（当前设计仅命令方块 / 玩家提供位置）。
+
+---
+
 ## 8. 战斗事件契约
 
 ### 8.1 伤害事件模板
@@ -831,7 +858,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 | --- | --- | --- |
 | `CallBoss.js` | ✅ | 烈焰棒、6 秒倒计时、BossRegistry v1 |
 | `DouQuQu.js` | ✅ | 无差别攻击模式：`/douququ` 命令、PDC 持久化、共享 API、BOSS 互相攻击 |
-| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（一阶段 / 二阶段无缝循环、死亡自爆 UNICUBE! 播放 77 秒后切回默认歌单）；队伍前缀置空修复 BOSS 名在命令反馈 / 死亡消息中重复播报，契约 v1.5.3 |
+| `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（一阶段 / 二阶段无缝循环、死亡自爆 UNICUBE! 播放 77 秒后切回默认歌单）；队伍前缀置空修复 BOSS 名在命令反馈 / 死亡消息中重复播报，契约 v1.5.4 |
+| `Resurrection.js` | ✅ | 命令方块专用 `/resurrection <秒数>`：最近玩家旁观者模式 + 私发提示 + actionbar/title 倒计时 + 恢复原模式；PDC 兜底重启/重载恢复，契约 v1.5.4 |
 | `ThousandFacedWitch.js` | ✅ | 千面魔女；已修复 `ItemDisplay` 召唤异常与 `damage(amount, null)` 重载歧义；已接入 DouQuQu 无差别攻击模式 |
 | `SuperTNT.js` | ✅ | 自定义 float 爆炸威力 TNT：`/supertnt [0.1~64]`；BlockPlaceEvent → TNTPrimeEvent → EntitySpawnEvent/主循环 → ExplosionPrimeEvent；取消原版整数爆炸并走 5 参数 `createExplosion` |
 | `KanKanSword.js` | ❌ 待迁移 | 仍有顶层 `var Material` 等；迁移时保持行为不变 |
@@ -842,6 +870,9 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-29：升级 v1.5.4。新增 7.12 `Resurrection.js` 契约：命令方块专用 `/resurrection <秒数>`（1~600 秒），以执行位置为基准找同世界最近玩家，保存原模式/飞行状态后切换旁观者，私发“已经切换为旁观者模式，请尽快前往死亡地点”，每秒 actionbar + 10/5/3/2/1 秒 title 倒计时，结束后恢复原模式与飞行状态；支持重复触发刷新计时、玩家退出立即恢复、PDC `resurrection_prev_mode` 在服务器重启/脚本重载后兜底恢复。实测命令方块 `/resurrection 5` 在 XP 上完成切换与恢复。
+
 
 - 2026-09-29：升级 v1.5.3。修复 BOSS 名在播报消息中重复：`createBossScoreboard` 的队伍 `ijf_<uuid>` 不再设置 `[炎狱焚风] ` 聊天前缀，改为 `team.setPrefix("")`；队伍仍保留 Husk / Slime UUID 用于统一识别，但原版 `/damage`、`/execute`、死亡消息等不再出现“[炎狱焚风] 炎狱焚风”的双重名称；同时把火种回归提示从“[炎狱焚风] 炎狱焚风恢复了”改为“[炎狱焚风] 恢复了”。实测队伍前缀为空、displayName 仍为炎狱焚风。
 
