@@ -66,13 +66,16 @@
     var NORMAL_ENDER_PEARL_SPEED = 1.5;
     var PEARL_SPEED_MULTIPLIER = 2.5;
     var THROWN_PEARL_SPEED = NORMAL_ENDER_PEARL_SPEED * PEARL_SPEED_MULTIPLIER; // 3.75
+    var PEARL_COOLDOWN_TICKS = 12;
 
     var PROJECTILE_TAG = "ender_sword_pearl";
 
     // -----------------------------------------------------------------------
     // 运行时状态
     // -----------------------------------------------------------------------
+    var globalTick = 0;
     var activePearls = [];       // 本武器投掷出的末影珍珠，脚本卸载时清理
+    var pearlReadyTick = {};     // player uuid -> 下一次可投掷末影珍珠的 tick
     var lastEquipRegistry = null;
 
     // -----------------------------------------------------------------------
@@ -109,6 +112,39 @@
             } catch (e) { }
         }
         activePearls = current;
+    }
+
+    function getPlayerId(player) {
+        try {
+            return String(player.getUniqueId().toString());
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function canThrowPearl(player) {
+        var uuid = getPlayerId(player);
+        if (!uuid) return false;
+        return globalTick >= (pearlReadyTick[uuid] || 0);
+    }
+
+    function setPearlCooldown(player, ticks) {
+        var uuid = getPlayerId(player);
+        if (uuid) pearlReadyTick[uuid] = globalTick + Math.max(0, ticks);
+
+        try {
+            var item = player.getInventory().getItemInMainHand();
+            if (isEnderSword(item)) player.setCooldown(item, ticks);
+        } catch (e) { }
+    }
+
+    function warnPearlCooldown(player) {
+        try {
+            var uuid = getPlayerId(player);
+            var remain = Math.max(0, (pearlReadyTick[uuid] || 0) - globalTick);
+            player.sendActionBar(ChatColor.GRAY + "末影珍珠冷却中："
+                    + ChatColor.YELLOW + remain + ChatColor.GRAY + " tick");
+        } catch (e) { }
     }
 
     // -----------------------------------------------------------------------
@@ -222,6 +258,19 @@
     ensureRegistered();
     task.repeat(ticks(20), ticks(20), ensureRegistered);
 
+    // 1 tick 主循环：维护 Q 技能冷却计时。
+    task.repeat(ticks(1), ticks(1), function () {
+        globalTick++;
+    });
+
+    // 玩家退出时清理冷却状态。
+    registerEvent("org.bukkit.event.player.PlayerQuitEvent", function (event) {
+        try {
+            var uuid = String(event.getPlayer().getUniqueId().toString());
+            delete pearlReadyTick[uuid];
+        } catch (e) { }
+    });
+
     // -----------------------------------------------------------------------
     // Q 技能：投掷高速末影珍珠
     // -----------------------------------------------------------------------
@@ -237,7 +286,7 @@
             var pearl = world.spawn(spawnLocation, EnderPearlClass);
             if (!pearl) {
                 sendMessage(player, ChatColor.RED + "末影珍珠生成失败，请稍后再试。");
-                return;
+                return false;
             }
 
             pearl.setShooter(player);
@@ -253,8 +302,11 @@
             try {
                 world.playSound(player.getLocation(), Sound.ENTITY_ENDER_PEARL_THROW, 1.0, 1.0);
             } catch (e) { }
+
+            return true;
         } catch (e) {
             log.error("EnderSword 投掷末影珍珠异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+            return false;
         }
     }
 
@@ -278,7 +330,15 @@
 
             // 按 Q 时不允许真的丢出末影剑，改为投掷末影珍珠。
             event.setCancelled(true);
-            throwEnderPearl(player);
+
+            if (!canThrowPearl(player)) {
+                warnPearlCooldown(player);
+                return;
+            }
+
+            if (throwEnderPearl(player)) {
+                setPearlCooldown(player, PEARL_COOLDOWN_TICKS);
+            }
         } catch (e) {
             log.error("EnderSword Q 事件异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
         }
@@ -402,6 +462,7 @@
                 } catch (e) { }
             }
             activePearls = [];
+            pearlReadyTick = {};
 
             try {
                 var registry = getShared("EquipRegistry");
@@ -411,5 +472,6 @@
     } catch (e) { }
 
     log.info("EnderSword 已加载：/equip arms " + SWORD_NAME
-            + "（基础伤害 9 / 触及 +1.5 / Q 高速末影珍珠）");
+            + "（基础伤害 9 / 触及 +1.5 / Q 高速末影珍珠，冷却 "
+            + PEARL_COOLDOWN_TICKS + " tick）");
 })();
