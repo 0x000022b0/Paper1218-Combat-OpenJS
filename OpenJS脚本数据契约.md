@@ -2,7 +2,7 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.10
+> **契约版本**：1.5.11
 > **最后更新**：2026-09-30
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
@@ -815,25 +815,27 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 > **⚠️ 重点**
 >
-> - 弩必须通过 `EntityShootBowEvent.getBow()` 的 PDC 识别，不能按材质把普通弩误判为魔弹射手。
-> - 箭矢追踪状态 MUST 以箭矢 UUID 为键；普通弹每 2 tick 修正、第 7 发特殊弹每 tick 修正。
-> - 穿透附魔生效时，箭矢首次命中后 MUST 保留状态（可停止转向），否则后续穿刺命中会丢失 20 / 40 伤害覆写。
-> - 第 7 发特性 MUST 隐藏在 Lore 之外，不得写入物品介绍。
+> - 魔弹射手 MUST 通过 `EntityShootBowEvent` 的 `getBow()` PDC 识别，并 `setCancelled(true)` 拦截原版箭矢；不能按材质误伤普通弩。
+> - 拦截后 MUST 调用 `setConsumeArrow(false)` / `setConsumeItem(false)`，避免取消箭矢后仍消耗弹药。
+> - 激光固定 64 格，沿途所有 `LivingEntity` 各结算一次伤害且 MUST NOT 做队伍过滤（不区分队员）。
+> - 第 7 发隐藏特性 MUST 不写入 Lore；单人模式无目标时直接对自己造成 40 伤害（保留伤害翻倍）。
 
 装备与数值：
 
 | 项目 | 规则 |
 | --- | --- |
 | 基础物品 | `Material.CROSSBOW`，无限耐久 |
-| 主手伤害 | 箭矢基础伤害 20；`EntityDamageByEntityEvent` 中覆写为 20（第 7 发为 40） |
-| 隐藏附魔 | 真实附魔：`PIERCING=5`、`QUICK_CHARGE=4`；同时 `HIDE_ENCHANTS` 隐藏所有附魔文字并保留附魔光效 |
-| 普通弹道 | `EntityShootBowEvent` 登记箭矢；每 2 tick 追踪场上当前 HP 最高的 `LivingEntity`（排除射手、ArmorStand、旁观者） |
-| 第 7 发特殊弹 | 每名玩家连续射击计数；第 7 发随机锁定一名玩家、每 tick 修正，伤害 40；发射后计数清零 |
-| 无随机玩家时 | 第 7 发回退为“当前 HP 最高的敌人”，避免无目标可用 |
-| 穿刺兼容 | 首次命中后保留追踪状态、停止转向，保证后续穿刺命中仍按 20 / 40 结算 |
-| Lore | MUST 写入：基础伤害 20、箭矢每 2 tick 修正轨迹、优先攻击 HP 最高的敌人；MUST NOT 写入第 7 发隐藏特性 |
+| 隐藏附魔 | 真实附魔 `PIERCING=5`、`QUICK_CHARGE=4`；`HIDE_ENCHANTS` 隐藏附魔文字并保留附魔光效 |
+| 射箭拦截 | `EntityShootBowEvent`：识别 PDC 后取消原版箭矢、禁止消耗箭矢，改为发射蓝色 DUST 激光 |
+| 激光范围 | 固定 64 格贯穿；每只沿途 `LivingEntity` 只结算一次伤害；不区分队伍 / 队员 |
+| 普通激光伤害 | 20 |
+| 第 7 发特殊激光 | 连续射击第 7 发；优先锁定同一 scoreboard 队伍在线玩家，无队伍时回退同世界其他在线玩家 |
+| 单人模式 | 第 7 发没有可选目标时，直接对自己造成 40 伤害，不产生激光 |
+| 特殊激光伤害 | 40（保留伤害 ×2） |
+| 第 7 发后 | 射击计数清零 |
+| Lore | MUST 写入：基础伤害 20、64 格蓝色激光、攻击沿途所有敌人（不区分队员）；MUST NOT 写入第 7 发隐藏特性 |
 
-实测：物品附魔为 PIERCING 5 / QUICK_CHARGE 4 且附魔文字隐藏；单发命中事件伤害 20；连续 8 发伤害依次为 20,20,20,20,20,20,40,20。
+实测：两个 100 HP 僵尸分别位于 6 格 / 12 格，单次普通激光各命中一次并均变为 80 HP；实体箭矢被拦截取消。
 
 
 ## 9. 日志、提示与错误处理契约
@@ -1012,6 +1014,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-09-30：升级 v1.5.11。修改魔弹射手契约：拦截 `EntityShootBowEvent` 后不再发射箭矢，改为 64 格蓝色贯穿激光，对沿途所有敌人各结算一次 20 伤害且不区分队伍；第 7 发锁定队员（scoreboard 队伍优先，无队伍回退其他在线玩家），单人模式直接反噬自身 40；第 7 发隐藏特性不写入 Lore。
 
 - 2026-09-30：升级 v1.5.10。新增 8.10 魔弹射手契约：弩基础伤害 20、无限耐久、隐藏附魔文字的真实穿透 5 / 快速装填 4；普通箭每 2 tick 追踪最高 HP 敌人；第 7 发隐藏行为（随机玩家、每 tick 修正、伤害 40）；穿刺命中后保留伤害覆写状态。实测 1~8 发伤害 20/20/20/20/20/20/40/20。
 

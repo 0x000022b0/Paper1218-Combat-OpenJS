@@ -6,8 +6,10 @@
  * 特殊效果：
  *   - 弩魔改：基础伤害 20，无限耐久。
  *   - 自带穿透 5、快速装填 4，有附魔光效，但隐藏所有附魔文字。
- *   - 箭矢每 2 tick 修正一次轨迹，优先追踪场上当前 HP 最高的敌人。
- *   - 隐藏特性：每 6 次射击后的第 7 次攻击必定锁定随机玩家，每 tick 修正轨迹，伤害翻倍。
+ *   - 拦截 EntityShootBowEvent，不发射箭矢，改为发射 64 格蓝色激光；
+ *     激光对沿途所有敌人各结算一次伤害，不区分队伍 / 队员。
+ *   - 隐藏特性：每 6 次射击后的第 7 发激光必定瞄准队员（无队伍时回退为其他在线玩家）；
+ *     如果单人模式没有可选目标，则直接对自己造成伤害；第 7 发伤害翻倍。
  */
 
 // 作用域隔离：所有变量、常量和函数都封装在本 IIFE 内，
@@ -28,9 +30,13 @@
     var NamespacedKey = Java.type("org.bukkit.NamespacedKey");
     var Player = Java.type("org.bukkit.entity.Player");
     var LivingEntity = Java.type("org.bukkit.entity.LivingEntity");
-    var Projectile = Java.type("org.bukkit.entity.Projectile");
-    var AbstractArrow = Java.type("org.bukkit.entity.AbstractArrow");
+    var Bukkit = Java.type("org.bukkit.Bukkit");
     var Vector = Java.type("org.bukkit.util.Vector");
+    var Location = Java.type("org.bukkit.Location");
+    var Particle = Java.type("org.bukkit.Particle");
+    var DustOptions = Java.type("org.bukkit.Particle$DustOptions");
+    var Color = Java.type("org.bukkit.Color");
+    var Sound = Java.type("org.bukkit.Sound");
     var Class = Java.type("java.lang.Class");
     var Array = Java.type("java.lang.reflect.Array");
     var ItemFlagClass = Class.forName("org.bukkit.inventory.ItemFlag");
@@ -43,19 +49,19 @@
     var EQUIP_SLOT = "arms";
 
     var WEAPON_KEY = new NamespacedKey(plugin, "magic_bullet_shooter_item");
-    var ARROW_TAG = "magic_bullet_arrow";
 
     var BASE_DAMAGE = 20.0;
-    var SPECIAL_DAMAGE = 40.0;          // 第 7 发射击伤害翻倍
-    var NORMAL_STEER_INTERVAL = 2;      // 普通箭每 2 tick 修正
-    var SPECIAL_STEER_INTERVAL = 1;     // 特殊箭每 tick 修正
-    var HOMING_SPEED = 2.0;
-    var SHOTS_BEFORE_SPECIAL = 7;       // 第 7 发为特殊弹
+    var SPECIAL_DAMAGE = 40.0;      // 第 7 发伤害翻倍
+    var LASER_RANGE = 64.0;
+    var LASER_RADIUS = 0.6;
+    var SHOTS_BEFORE_SPECIAL = 7;
+
+    var BLUE_DUST = new DustOptions(Color.fromRGB(40, 120, 255), 1.2);
+    var BLUE_CORE_DUST = new DustOptions(Color.fromRGB(180, 230, 255), 0.8);
 
     // -----------------------------------------------------------------------
     // 运行时状态
     // -----------------------------------------------------------------------
-    var trackedArrows = {};  // arrow uuid -> state
     var shotCounts = {};     // player uuid -> 连续射击计数（已发射数）
     var lastEquipRegistry = null;
 
@@ -86,14 +92,6 @@
         }
     }
 
-    function getMainHandItem(player) {
-        try {
-            return player.getInventory().getItemInMainHand();
-        } catch (e) {
-            return null;
-        }
-    }
-
     function safeNormalize(vector) {
         if (!vector) return new Vector(0, 0, 1);
         if (vector.lengthSquared() < 0.0001) return new Vector(0, 0, 1);
@@ -117,6 +115,29 @@
         }
     }
 
+    function damageSelf(player, amount) {
+        try {
+            if (!player || !player.isOnline() || player.isDead()) return;
+            player.setNoDamageTicks(0);
+            player.damage(amount);
+        } catch (e) {
+            log.error("MagicBulletShooter 自身伤害异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+        }
+    }
+
+    function distanceSquaredToSegment(point, start, end) {
+        var segment = end.clone().subtract(start);
+        var lengthSquared = segment.lengthSquared();
+        if (lengthSquared < 0.0001) return point.distanceSquared(start);
+
+        var t = point.clone().subtract(start).dot(segment) / lengthSquared;
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+
+        var closest = start.clone().add(segment.multiply(t));
+        return point.distanceSquared(closest);
+    }
+
     // -----------------------------------------------------------------------
     // 物品构建 / 注册
     // -----------------------------------------------------------------------
@@ -128,7 +149,7 @@
         meta.setDisplayName(ChatColor.DARK_PURPLE + WEAPON_NAME);
         meta.setLore(toJavaList([
             ChatColor.YELLOW + "基础伤害：" + ChatColor.RED + "20",
-            ChatColor.AQUA + "箭矢每 2 tick 修正轨迹，优先攻击 HP 最高的敌人"
+            ChatColor.AQUA + "发射 64 格蓝色激光，攻击沿途所有敌人（不区分队员）"
         ]));
 
         meta.setUnbreakable(true);
@@ -183,129 +204,152 @@
     task.repeat(ticks(20), ticks(20), ensureRegistered);
 
     // -----------------------------------------------------------------------
-    // 目标选择 / 弹道修正
+    // 队员选择 / 激光结算
     // -----------------------------------------------------------------------
-    function findHighestHpEnemy(world, owner) {
-        var best = null;
-        var bestHealth = -1.0;
+    function findTeammateTarget(shooter) {
         try {
-            var it = world.getLivingEntities().iterator();
-            while (it.hasNext()) {
-                var entity = it.next();
-                if (!isDamageableTarget(entity, owner)) continue;
-
-                var health = entity.getHealth();
-                if (health > bestHealth) {
-                    bestHealth = health;
-                    best = entity;
+            var scoreboard = shooter.getScoreboard();
+            var team = scoreboard == null ? null : scoreboard.getEntryTeam(shooter.getName());
+            if (team != null) {
+                var entries = team.getEntries().iterator();
+                var teammates = [];
+                while (entries.hasNext()) {
+                    var name = entries.next();
+                    var player = Bukkit.getPlayerExact(name);
+                    if (player != null && player !== shooter && isDamageableTarget(player, shooter)) {
+                        teammates.push(player);
+                    }
+                }
+                if (teammates.length > 0) {
+                    return teammates[Math.floor(Math.random() * teammates.length)];
                 }
             }
-        } catch (e) {
-            log.error("MagicBulletShooter 目标选择异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
-        }
-        return best;
-    }
 
-    function findRandomPlayer(world, owner) {
-        try {
-            var players = world.getPlayers();
-            var candidates = [];
+            // 没有 scoreboard 队伍时，把同世界其他在线玩家视为“队员”；
+            // 真正单人模式下这里返回 null，第 7 发就会直接反噬自己。
+            var players = shooter.getWorld().getPlayers();
+            var fallback = [];
             for (var i = 0; i < players.size(); i++) {
-                var player = players.get(i);
-                if (!isDamageableTarget(player, owner)) continue;
-                candidates.push(player);
+                var other = players.get(i);
+                if (other !== shooter && isDamageableTarget(other, shooter)) fallback.push(other);
             }
-            if (candidates.length === 0) return null;
-            return candidates[Math.floor(Math.random() * candidates.length)];
+            if (fallback.length > 0) {
+                return fallback[Math.floor(Math.random() * fallback.length)];
+            }
         } catch (e) {
-            return null;
+            log.error("MagicBulletShooter 队员选择异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
         }
+        return null;
     }
 
-    function steerArrow(state, target, speed) {
+    function findLaserEnd(world, start, direction) {
+        // 魔弹射手的激光固定贯穿 64 格，不因地形提前消失；
+        // 如需“撞墙停止”，可在这里加入方块采样。
+        return start.clone().add(direction.clone().multiply(LASER_RANGE));
+    }
+
+    function spawnLaserParticles(world, start, end) {
         try {
-            if (target == null || state.projectile == null || !state.projectile.isValid()) return;
-            var from = state.projectile.getLocation().toVector();
-            var to = target.getLocation().clone()
-                    .add(0, target.getHeight() / 2.0, 0).toVector();
-            var direction = to.subtract(from);
-            if (direction.lengthSquared() < 0.04) return;
-            state.projectile.setVelocity(direction.normalize().multiply(speed));
+            var vector = end.toVector().subtract(start.toVector());
+            var distance = vector.length();
+            if (distance < 0.1) return;
+
+            var direction = vector.normalize();
+            var steps = Math.max(1, Math.ceil(distance / 0.5));
+            for (var i = 0; i <= steps; i++) {
+                var point = start.toVector().add(direction.clone().multiply(distance * i / steps));
+                world.spawnParticle(Particle.DUST, point.getX(), point.getY(), point.getZ(),
+                        1, 0.0, 0.0, 0.0, 0.0, BLUE_DUST);
+                if (i % 2 === 0) {
+                    world.spawnParticle(Particle.DUST, point.getX(), point.getY(), point.getZ(),
+                            1, 0.0, 0.0, 0.0, 0.0, BLUE_CORE_DUST);
+                }
+            }
         } catch (e) { }
     }
 
-    function trackArrow(shooter, projectile, special) {
+    function damageLaserEntities(world, start, end, shooter, special) {
         try {
-            if (!(projectile instanceof Projectile)) return;
+            var startVector = start.toVector();
+            var endVector = end.toVector();
+            var distance = start.distance(end);
+            var mid = new Location(world,
+                    (start.getX() + end.getX()) / 2.0,
+                    (start.getY() + end.getY()) / 2.0,
+                    (start.getZ() + end.getZ()) / 2.0);
+            var searchRadius = distance / 2.0 + 4.0;
+            var nearby = world.getNearbyEntities(mid, searchRadius, searchRadius, searchRadius);
+            var iterator = nearby.iterator();
+            var amount = special ? SPECIAL_DAMAGE : BASE_DAMAGE;
 
-            var target = null;
-            if (special) {
-                target = findRandomPlayer(shooter.getWorld(), shooter);
-                if (target == null) target = findHighestHpEnemy(shooter.getWorld(), shooter);
-            }
+            while (iterator.hasNext()) {
+                var target = iterator.next();
+                if (!isDamageableTarget(target, shooter)) continue;
 
-            var uuid = String(projectile.getUniqueId().toString());
-            trackedArrows[uuid] = {
-                owner: shooter,
-                projectile: projectile,
-                special: special === true,
-                target: target,
-                ticks: 0
-            };
-
-            projectile.addScoreboardTag(ARROW_TAG);
-            projectile.setGravity(false);
-            try { projectile.setCritical(false); } catch (e) { }
-
-            if (projectile instanceof AbstractArrow) {
-                projectile.setDamage(special ? SPECIAL_DAMAGE : BASE_DAMAGE);
-                projectile.setPierceLevel(5);
+                var center = target.getLocation().clone()
+                        .add(0, target.getHeight() / 2.0, 0).toVector();
+                var threshold = LASER_RADIUS + Math.max(target.getWidth(), target.getHeight()) / 2.0;
+                if (distanceSquaredToSegment(center, startVector, endVector)
+                        <= threshold * threshold) {
+                    try {
+                        target.setNoDamageTicks(0);
+                        target.damage(amount);
+                    } catch (e) { }
+                }
             }
         } catch (e) {
-            log.error("MagicBulletShooter 追踪箭矢异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+            log.error("MagicBulletShooter 激光伤害异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
         }
     }
 
-    function updateTrackedArrows() {
-        for (var key in trackedArrows) {
-            if (!trackedArrows.hasOwnProperty(key)) continue;
-            var state = trackedArrows[key];
-            if (!state) continue;
+    function spawnSelfLaserBurst(player) {
+        try {
+            var world = player.getWorld();
+            var location = player.getLocation().clone().add(0, 1.0, 0);
+            world.spawnParticle(Particle.DUST, location.getX(), location.getY(), location.getZ(),
+                    35, 0.8, 1.0, 0.8, 0.0, BLUE_DUST);
+            world.spawnParticle(Particle.DUST, location.getX(), location.getY(), location.getZ(),
+                    20, 0.5, 0.7, 0.5, 0.0, BLUE_CORE_DUST);
+            world.playSound(location, Sound.ENTITY_ENDER_DRAGON_SHOOT, 1.0, 1.2);
+        } catch (e) { }
+    }
 
-            try {
-                var projectile = state.projectile;
-                if (projectile == null || !projectile.isValid()) {
-                    delete trackedArrows[key];
-                    continue;
+    function fireLaser(shooter, special) {
+        try {
+            var eye = shooter.getEyeLocation();
+            var direction = safeNormalize(eye.getDirection());
+
+            if (special) {
+                var teammate = findTeammateTarget(shooter);
+                if (teammate == null) {
+                    // 单人模式：第 7 发没有队员可锁定，直接反噬自己（伤害 *2）。
+                    damageSelf(shooter, SPECIAL_DAMAGE);
+                    spawnSelfLaserBurst(shooter);
+                    return;
                 }
-
-                // 首次命中后不再修正方向，但保留状态以便穿刺后的命中仍按 20 / 40 结算。
-                if (state.hitOnce === true) continue;
-
-                state.ticks++;
-                var interval = state.special ? SPECIAL_STEER_INTERVAL : NORMAL_STEER_INTERVAL;
-                if (state.ticks % interval !== 0) continue;
-
-                var target = state.target;
-                if (target == null || target.isDead() || !target.isValid()) {
-                    if (state.special) {
-                        target = findRandomPlayer(state.owner.getWorld(), state.owner);
-                        if (target == null) target = findHighestHpEnemy(state.owner.getWorld(), state.owner);
-                        state.target = target;
-                    } else {
-                        target = findHighestHpEnemy(state.owner.getWorld(), state.owner);
-                    }
-                }
-
-                if (target != null) steerArrow(state, target, HOMING_SPEED);
-            } catch (e) {
-                log.error("MagicBulletShooter 弹道修正异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+                var targetCenter = teammate.getLocation().clone()
+                        .add(0, teammate.getHeight() / 2.0, 0);
+                direction = safeNormalize(targetCenter.toVector().subtract(eye.toVector()));
             }
+
+            var world = shooter.getWorld();
+            var end = findLaserEnd(world, eye, direction);
+            spawnLaserParticles(world, eye, end);
+            damageLaserEntities(world, eye, end, shooter, special);
+            playSound(world, eye, Sound.ENTITY_ENDER_DRAGON_SHOOT, 1.0, 1.8);
+        } catch (e) {
+            log.error("MagicBulletShooter 激光发射异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
         }
+    }
+
+    function playSound(world, location, sound, volume, pitch) {
+        try {
+            world.playSound(location, sound, volume, pitch);
+        } catch (e) { }
     }
 
     // -----------------------------------------------------------------------
-    // 射击事件
+    // 拦截射箭事件
     // -----------------------------------------------------------------------
     registerEvent("org.bukkit.event.entity.EntityShootBowEvent", function (event) {
         try {
@@ -317,6 +361,11 @@
             var bow = event.getBow();
             if (!isMagicWeapon(bow)) return;
 
+            // 拦截原本的箭矢，改为发射蓝色激光。
+            event.setCancelled(true);
+            try { event.setConsumeArrow(false); } catch (e) { }
+            try { event.setConsumeItem(false); } catch (e) { }
+
             var uuid = getPlayerId(shooter);
             if (!uuid) return;
 
@@ -324,49 +373,12 @@
             var special = count >= SHOTS_BEFORE_SPECIAL;
             shotCounts[uuid] = special ? 0 : count;
 
-            var projectile = event.getProjectile();
-            if (!(projectile instanceof Projectile)) return;
-
-            trackArrow(shooter, projectile, special);
+            fireLaser(shooter, special);
         } catch (e) {
-            log.error("MagicBulletShooter 射击事件异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+            log.error("MagicBulletShooter 射箭拦截异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
         }
     });
 
-    registerEvent("org.bukkit.event.entity.ProjectileHitEvent", function (event) {
-        try {
-            var projectile = event.getEntity();
-            if (!(projectile instanceof Projectile)) return;
-            var uuid = String(projectile.getUniqueId().toString());
-            var state = trackedArrows[uuid];
-            if (state) {
-                // 不删除状态：穿刺附魔会让箭矢继续命中后续目标，
-                // 必须保留伤害覆写；命中后只停止弹道修正。
-                state.hitOnce = true;
-            }
-        } catch (e) { }
-    });
-
-    registerEvent("org.bukkit.event.entity.EntityDamageByEntityEvent", function (event) {
-        try {
-            var damager = null;
-            try { damager = event.getDamager(); } catch (e) { return; }
-            if (!(damager instanceof Projectile)) return;
-
-            var uuid = String(damager.getUniqueId().toString());
-            var state = trackedArrows[uuid];
-            if (!state) return;
-
-            var target = event.getEntity();
-            if (target === state.owner) return;
-
-            event.setDamage(state.special ? SPECIAL_DAMAGE : BASE_DAMAGE);
-        } catch (e) {
-            log.error("MagicBulletShooter 箭矢伤害异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
-        }
-    });
-
-    // 玩家退出时清理计数（箭矢状态会因实体无效自动清理）。
     registerEvent("org.bukkit.event.player.PlayerQuitEvent", function (event) {
         try {
             var uuid = String(event.getPlayer().getUniqueId().toString());
@@ -374,20 +386,9 @@
         } catch (e) { }
     });
 
-    // -----------------------------------------------------------------------
-    // 主循环 / 清理
-    // -----------------------------------------------------------------------
-    task.repeat(ticks(1), ticks(1), function () {
-        try {
-            updateTrackedArrows();
-        } catch (e) {
-            log.error("MagicBulletShooter 主循环异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
-        }
-    });
-
+    // 脚本卸载 / 热重载：清空射击计数并在装备注册表中注销。
     try {
         task.bindToUnload(function () {
-            trackedArrows = {};
             shotCounts = {};
 
             try {
@@ -398,5 +399,5 @@
     } catch (e) { }
 
     log.info("MagicBulletShooter 已加载：/equip arms " + WEAPON_NAME
-            + "（伤害 20 / 穿透 5 / 快速装填 4 / 弹道修正）");
+            + "（伤害 20 / 64 格蓝色激光 / 第 7 发队员锁定）");
 })();
