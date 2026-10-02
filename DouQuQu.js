@@ -153,10 +153,63 @@
         try { return getShared("BossRegistry"); } catch (e) { return null; }
     }
 
+    function bossNameById(api, id) {
+        try {
+            if (api != null && typeof api.getName === "function") {
+                return String(api.getName(String(id)));
+            }
+        } catch (e) { }
+        return String(id);
+    }
+
+    // 兼容旧版 CallBoss（resolve 返回 def 对象 / {ambiguous}）与
+    // 新版 CallBoss（resolve 返回 id 字符串；无匹配和多个前缀匹配都返回 null）。
     function resolveBoss(query) {
         var api = registryApi();
         if (!api) return null;
-        try { return api.resolve(query); } catch (e) { return null; }
+        var q = String(query == null ? "" : query).trim();
+        if (q.length === 0) return null;
+
+        try {
+            var resolved = api.resolve(q);
+            if (resolved != null) {
+                if (typeof resolved === "object") return resolved;
+                var id = String(resolved);
+                return { id: id, name: bossNameById(api, id) };
+            }
+
+            // 新版 resolve 对“未找到”和“前缀不唯一”都返回 null，这里补回歧义提示。
+            if (typeof api.list === "function") {
+                var ids = api.list();
+                var prefixMatches = [];
+                var lower = q.toLowerCase();
+                for (var i = 0; i < ids.length; i++) {
+                    var item = ids[i];
+                    var idText = String(item);
+                    var name = bossNameById(api, idText);
+                    var aliases = null;
+                    try {
+                        if (typeof api.getAliases === "function") aliases = api.getAliases(idText);
+                    } catch (e) { }
+                    var keys = [idText, name];
+                    if (aliases != null) {
+                        for (var a = 0; a < aliases.size(); a++) keys.push(String(aliases.get(a)));
+                    }
+                    var exact = false;
+                    var prefix = false;
+                    for (var k = 0; k < keys.length; k++) {
+                        var key = String(keys[k]).toLowerCase();
+                        if (key === lower) { exact = true; break; }
+                        if (key.indexOf(lower) === 0) prefix = true;
+                    }
+                    if (exact) return { id: idText, name: name };
+                    if (prefix) prefixMatches.push({ id: idText, name: name });
+                }
+                if (prefixMatches.length === 1) return prefixMatches[0];
+                if (prefixMatches.length > 1) return { ambiguous: prefixMatches };
+            }
+        } catch (e) { }
+        return null;
     }
 
     function joinArgs(args, start) {
@@ -171,7 +224,13 @@
         if (!api) return names;
         try {
             var list = api.list();
-            for (var i = 0; i < list.length; i++) names.push(String(list[i].name));
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i];
+                var idText = (item != null && typeof item === "object") ? String(item.id) : String(item);
+                var name = (item != null && typeof item === "object" && item.name != null)
+                        ? String(item.name) : bossNameById(api, idText);
+                names.push(name);
+            }
         } catch (e) { }
         return names;
     }
@@ -185,8 +244,12 @@
             var name = id;
             if (api) {
                 try {
-                    var def = api.get(id);
-                    if (def && def.name) name = String(def.name);
+                    if (typeof api.getName === "function") {
+                        name = bossNameById(api, id);
+                    } else {
+                        var def = api.get(id);
+                        if (def && def.name) name = String(def.name);
+                    }
                 } catch (e) { }
             }
             names.push(name);

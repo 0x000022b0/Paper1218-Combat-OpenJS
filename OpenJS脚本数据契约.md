@@ -2,8 +2,8 @@
 
 > **适用范围**：`E:\McServer\1218_server_combat\plugins\OpenJS\scripts\` 下的所有 OpenJS 脚本
 > **运行时**：OpenJS 1.5.0 / Paper 1.21.8 / Java 21
-> **契约版本**：1.5.11
-> **最后更新**：2026-09-30
+> **契约版本**：1.6.0
+> **最后更新**：2026-10-02
 > **优先级**：本契约与《可能有用的开发资料.md》冲突时，以本契约为准；与 OpenJS / Bukkit 实际 API 冲突时，以实测结果为准，并把实测结论回写到本契约。
 
 ---
@@ -299,28 +299,63 @@ task.repeat(ticks(1), ticks(1), function () {
 
 ### 6.6 `CallBoss` pending 召唤条目
 
+> 新版 CallBoss 的 `pendingSummons` 是 `playerUuid -> pending` 的字典，`pendingOrder` 维护插入顺序。
+
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `player` | Player | 召唤者 |
 | `playerUuid` | string | 防止同一玩家重复排队 |
 | `bossId` | string | BOSS id，倒计时结束时重新解析定义 |
 | `bossName` | string | 显示名 |
+| `silent` | boolean | 旧版 silentSummon 兼容：不播报召唤/倒计时/成功消息 |
 | `location` | Location | 右键时确定的生成位置 |
 | `worldName` | string | 倒计时结束时校验世界 |
-| `readyTick` | number | `callBossTick + 120` |
+| `readyTick` | number | `globalTick + 120` |
 | `nextAnnounceTick` | number | 下一次倒计时播报 tick |
 
-### 6.7 `BossRegistry` 注册定义
+### 6.7 `BossRegistry` 注册定义与 API
+
+**注册形式：**
+
+- 对象形式（旧脚本继续兼容）：`api.register(def)`
+- 位置参数形式（新脚本推荐）：`api.register(id, name, aliases, lore, spawnFn)`
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `id` | string | ✅ | 英文唯一 id |
 | `name` | string | ✅ | 中文显示名 |
-| `aliases` | string[] | MAY | 指令别名 |
-| `lore` | string[] | MAY | 烈焰棒 lore |
-| `heartbeat` | number | ✅ | `Date.now()`；每 20 tick 刷新 |
+| `aliases` | string[] / java.util.List | MAY | 指令别名 |
+| `lore` | string[] / java.util.List | MAY | 召唤物 lore 的额外行 |
 | `spawn` | function | ✅ | `function(location, player) { return true/false; }` |
+| `heartbeat` | number | MAY | 旧字段；新版框架不读取，脚本必须每 20 tick 调 `api.heartbeat(id)` |
+| `stickName` | string | MAY | 旧版兼容：自定义召唤物显示名 |
+| `stickLore` | string[] | MAY | 旧版兼容：提供时完全替换默认 lore（空数组 = 无 lore） |
+| `consumeOnSummon` | boolean | MAY | 旧版兼容：召唤成功后消耗一个对应召唤物 |
+| `silentSummon` | boolean | MAY | 旧版兼容：不播报召唤/倒计时/成功消息 |
 
+**共享 API：**
+
+| 方法 | 返回 | 说明 |
+| --- | --- | --- |
+| `register(def)` / `register(id,name,aliases,lore,spawnFn)` | boolean | 覆盖注册；跨引擎数据立即快照为 Java 值 |
+| `unregister(idOrDef)` | boolean | 注销并清理所有字段 |
+| `heartbeat(id)` | boolean | 注册表里存在该 id 时刷新心跳并返回 true |
+| `has(id)` | boolean | 已注册且心跳未超时 |
+| `get(id)` | java.util.Map / null | 兼容旧调用：`{id,name,alive}`；只建议做真值判断 |
+| `getName(id)` | string | 显示名 |
+| `getAliases(id)` | java.util.List | 别名 |
+| `describe(id)` | java.util.List | 可读注册信息 |
+| `resolve(query)` | string / null | 按 id / 显示名 / 别名 / 唯一前缀解析，返回 id；歧义或未找到返回 null |
+| `list()` | string[] | 存活 BOSS id 数组 |
+| `createStick(id)` | ItemStack / null | 创建召唤绿宝石 |
+| `spawn(id, location, player)` | boolean | 直接调用注册的 spawn 句柄 |
+
+**召唤物约定：**
+
+- 新材料 `EMERALD`，显示名默认等于 BOSS 显示名；旧 `BLAZE_ROD` / `STICK` / `ECHO_SHARD` 仍可识别。
+- 新 PDC key `callboss_summon_boss_id`，同时写旧 key `call_boss_rod_boss_id`。
+- `consumeOnSummon: true` 时，召唤成功后从玩家主手 / 副手 / 背包消耗 1 个对应召唤物。
+- 心跳超时 10 秒；`api.heartbeat(id)` 返回 false 说明注册表已更换或自身条目丢失，必须重新注册当前实例的 spawn 句柄。
 
 ### 6.8 `largeFireballWarning` 条目
 
@@ -995,11 +1030,15 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 
 ---
 
-## 附录 C：现有脚本合规情况（2026-09-29）
+## 附录 C：现有脚本合规情况（2026-10-02）
 
 | 脚本 | IIFE + strict | 说明 |
 | --- | --- | --- |
-| `CallBoss.js` | ✅ | 烈焰棒、6 秒倒计时、BossRegistry v1 |
+| `CallBoss.js` | ✅ | 新版召唤框架：绿宝石召唤物（兼容旧烈焰棒）、6 秒倒计时、BossRegistry Java 容器注册、对象式/位置参数式注册、`api.spawn`、旧字段兼容层 |
+| `BanditTrio.js` | ⚠️ 待迁移计分板 HP | `bandit_trio` 流寇三人组：组合召唤 TitlelessKnight / Sharpshooter / WanderingWarlock |
+| `TitlelessKnight.js` | ⚠️ 待迁移计分板 HP | `titleless_knight` 无爵骑士：HP200、Husk + 铁甲 + 锋利 V 下界合金剑；大剑三式 / 恐惧战吼 / 冲锋 |
+| `Sharpshooter.js` | ⚠️ 待迁移计分板 HP | `sharpshooter` 神射手：HP100、Stray + 白皮甲 + 弓；四类箭 + 闪避瞬移 |
+| `WanderingWarlock.js` | ⚠️ 待迁移计分板 HP | `wandering_warlock` 流浪术士：HP150、Skeleton + 金甲 + 书；戏法 / 1、2 级法术 / 护盾与法师护甲辅助 |
 | `DouQuQu.js` | ✅ | 无差别攻击模式：`/douququ` 命令、PDC 持久化、共享 API、BOSS 互相攻击 |
 | `InfernoFoehn.js` | ✅ | 炎狱焚风完整机制 + `-hard` 困难模式 + 计分板生命系统 + AllMusic 阶段 BGM（一阶段 / 二阶段无缝循环、死亡自爆 UNICUBE! 播放 77 秒后切回默认歌单）；队伍前缀置空修复 BOSS 名在命令反馈 / 死亡消息中重复播报，契约 v1.5.4 |
 | `Resurrection.js` | ✅ | 命令方块专用 `/resurrection <秒数>`：最近玩家旁观者模式 + 私发提示 + actionbar/title 倒计时 + 恢复原模式；PDC 兜底重启/重载恢复，契约 v1.5.4 |
@@ -1014,6 +1053,8 @@ registerEvent("org.bukkit.event.entity.EntityDamageEvent", function (event) {
 ---
 
 ## 附录 D：契约更新记录
+
+- 2026-10-02：升级 v1.6.0。导入新版 `CallBoss.js` 与四名新 BOSS（`BanditTrio.js` / `TitlelessKnight.js` / `Sharpshooter.js` / `WanderingWarlock.js`）。CallBoss 注册表改为 Java 容器 + `Java.extend(BiFunction)` 适配 spawn，支持对象式与位置参数式注册；新增 `has/getName/getAliases/describe/spawn`，`resolve` 返回 id 字符串，`list` 返回 id 数组，`createStick` 默认生成绿宝石并兼容旧召唤物 PDC key；保留 `stickName/stickLore/consumeOnSummon/silentSummon` 旧字段。同步更新 6.6 / 6.7 契约。实测 8 个 BOSS 注册、旧/新 BOSS 直接 spawn、模拟右键召唤与 `consumeOnSummon` 消耗均正常；四名新 BOSS 仍使用原版 HP，待迁移 7.10 计分板生命系统。
 
 - 2026-09-30：升级 v1.5.11。修改魔弹射手契约：拦截 `EntityShootBowEvent` 后不再发射箭矢，改为 64 格蓝色贯穿激光，对沿途所有敌人各结算一次 20 伤害且不区分队伍；第 7 发锁定队员（scoreboard 队伍优先，无队伍回退其他在线玩家），单人模式直接反噬自身 40；第 7 发隐藏特性不写入 Lore。
 
