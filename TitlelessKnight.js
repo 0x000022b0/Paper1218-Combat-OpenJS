@@ -242,7 +242,7 @@
     // -----------------------------------------------------------------------
     function logError(tag, e) {
         // 契约 9.2：异常日志必须带 e.stack，不能只写 e。
-        log.error(tag + "：" + e + (e && e.stack ? "\n" + e.stack : ""));
+                try { log.error(tag + "：" + e + (e && e.stack ? "\n" + e.stack : "")); } catch (ignored) { }
     }
 
     function clamp(value, lo, hi) {

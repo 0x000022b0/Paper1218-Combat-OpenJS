@@ -303,7 +303,7 @@
     // 工具函数
     // -----------------------------------------------------------------------
     function logError(tag, e) {
-        log.error(tag + "：" + e + (e && e.stack ? "\n" + e.stack : ""));
+                try { log.error(tag + "：" + e + (e && e.stack ? "\n" + e.stack : "")); } catch (ignored) { }
     }
 
     function clamp(value, lo, hi) {

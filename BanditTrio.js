@@ -284,7 +284,7 @@
             api.register(BOSS_ID, BOSS_NAME, aliases, lore, spawnBanditTrio);
             registeredThisInstance = true;
         } catch (e) {
-            log.error("BanditTrio 注册异常：" + e + (e && e.stack ? "\n" + e.stack : ""));
+                        try { log.error("BanditTrio 注册异常：" + e + (e && e.stack ? "\n" + e.stack : "")); } catch (ignored) { }
         }
     }
 
